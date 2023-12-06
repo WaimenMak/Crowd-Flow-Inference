@@ -282,7 +282,7 @@ class Diffusion_Model(torch.nn.Module):
         T_idx = T_idx.masked_fill(T_idx < 0, 0)
         T_idx = T_idx.masked_fill(T_idx > self.num_timesteps_input, self.num_timesteps_input-1)
         # T_idx = 0 * torch.ones_like(T)
-
+            # diffusion
         for n in range(self.num_nodes):
             diffusion_coefficient.append(self.diffusion_sample(upstream_flows[:, :, n], T[:, n], T_idx[:, n]))
         diffusion_coefficient = torch.stack(diffusion_coefficient, dim=2) # [batch_size, num_timesteps_input, num_nodes]
@@ -299,7 +299,8 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
     from lib.dataloader import FlowDataset
     from lib.utils import gen_data_dict, process_sensor_data, generate_ood_dataset, StandardScaler, generate_insample_dataset_ver2
-
+    from lib.utils import generating_ood_dataset, seperate_up_down
+    import dgl
 
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
@@ -312,16 +313,16 @@ if __name__ == '__main__':
     # in distributino
     # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset_ver2(data_dict)
     # out of distribution
-    train_sc = ['./sc sensor/crossroad1', './sc sensor/crossroad2', './sc sensor/crossroad3']
-    test_sc = ['./sc sensor/crossroad4']
+    train_sc = ['./sc sensor/crossroad1', './sc sensor/crossroad2']
+    test_sc = ['./sc sensor/crossroad3']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
 
     #seperate upstream and downstream
-    # data_dict = seperate_up_down(data_dict)
-    x_train, y_train, x_val, y_val, x_test, y_test = generate_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc)
+    data_dict = seperate_up_down(data_dict)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generate_ood_dataset(data_dict, train_sc, test_sc)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc)
 
     # up = data_dict['./sc sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
     # down = data_dict['./sc sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
@@ -330,7 +331,7 @@ if __name__ == '__main__':
 
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
-    num_nodes = x_train.shape[2]-1 # number of ancestor nodes, minus the down stream node
+    num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
 
     train_dataset = FlowDataset(np.concatenate([x_train, x_val], axis=0),
                                 np.concatenate([y_train, y_val], axis=0), batch_size=10)
@@ -348,20 +349,30 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
+    #processing graph data
+    src = np.array([0, 1])
+    dst = np.array([3, 2])
+
+    g = dgl.graph((src, dst))
+
+    g.ndata['label'] = torch.randn(4, 64)
+    g.edata['feature'] = torch.randn(9, 10, 64)
+    g.edata['label'] = torch.randn(9, 64)
+
     for epoch in range(2000):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
-            # training loop x: [batch_size, num_timesteps_input, num_nodes]
-            # if epoch % 50 == 0:
-            #     model.alpha.requires_grad_(True)
-            #     model.velocity_model.requires_grad_(False)
-            # else:
-            #     model.alpha.requires_grad_(False)
-            #     model.velocity_model.requires_grad_(True)
+
+            g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
+            g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
+            # caculate directed velocity matrix
+            for node in g.nodes():
+                if not g.predecessors(node):
 
 
             pred = model(x)
-            loss = loss_fn(pred, y[:, 0, :])
+            # loss = loss_fn(pred, y[:, 0, :])
+            loss = loss_fn(pred, g.ndata['label'][:, 0, :])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

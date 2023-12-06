@@ -654,7 +654,7 @@ def generate_insample_dataset_ver2(data_dict, save_mode=False):
 
     return x_train, y_train, x_val, y_val, x_test, y_test
 
-def generate_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
+def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
     all_x, all_y, all_test_x, all_test_y = [], [], [], []
     for scenario in data_dict.keys():
         data = data_dict[scenario]
@@ -662,7 +662,7 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
         downstream_data = data[:,1,1].reshape(-1,1)
         x_offsets = np.sort(
                 # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
-                np.concatenate((np.arange(-7, 1, 1),))
+                np.concatenate((np.arange(-lags, 1, 1),))
             )
         # Predict the next 2 mins
         y_offsets = np.sort(np.arange(1, 2, 1))
@@ -709,3 +709,81 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
     x_test, y_test = np.concatenate(all_test_x, axis=0), np.concatenate(all_test_y, axis=0)
 
     return x_train, y_train, x_val, y_val, x_test, y_test
+
+def generating_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
+    all_x, all_y, all_test_x, all_test_y = [], [], [], []
+    for scenario in data_dict.keys():
+        data = data_dict[scenario]
+        x_offsets = np.sort(
+                # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
+                np.concatenate((np.arange(-7, 1, 1),))
+            )
+            # Predict the next one hour
+        y_offsets = np.sort(np.arange(1, 2, 1))
+        min_t = abs(min(x_offsets))
+        max_t = abs(data.shape[0]- abs(max(y_offsets)))
+
+        # max_t = abs(N - abs(max(y_offsets)))  # Exclusive
+        x_train, y_train, x_test, y_test = [], [], [], []
+        for t in range(min_t, max_t):
+            x_t = data[t + x_offsets, ...]
+            y_t = data[t + y_offsets, ...]
+            if scenario in train_sc:
+                x_train.append(x_t)
+                y_train.append(y_t)
+            else:
+                x_test.append(x_t)
+                y_test.append(y_t)
+
+        # divide train scenerio and test
+        if scenario in train_sc:
+            x_train = np.stack(x_train, axis=0)
+            y_train = np.stack(y_train, axis=0)
+            all_x.append(x_train)
+            all_y.append(y_train)
+        elif scenario in test_sc:
+            x_test = np.stack(x_test, axis=0)
+            y_test = np.stack(y_test, axis=0)
+            all_test_x.append(x_test)
+            all_test_y.append(y_test)
+
+
+
+    zipped_lists = list(zip(all_x, all_y))
+    # random.shuffle(zipped_lists)  # shuffle data
+    all_x, all_y = zip(*zipped_lists)
+
+    x = np.concatenate(all_x, axis=0)
+    y = np.concatenate(all_y, axis=0)
+
+
+
+    num_samples, num_nodes = x.shape[0], x.shape[2]  # num_samples = ts - 12*2 +1
+    len_train = round(num_samples * 0.8)
+    # len_val = round(num_samples * 0.1)
+    x_train, y_train = x[: len_train, ...], y[: len_train, ...]
+    x_val, y_val = x[len_train:, ...], y[len_train:, ...]
+    x_test, y_test = np.concatenate(all_test_x, axis=0), np.concatenate(all_test_y, axis=0)
+
+    if save_mode:
+        for cat in ["train", "val", "test"]:
+            _x, _y = locals()["x_" + cat], locals()["y_" + cat]
+            np.savez_compressed(
+            os.path.join("./ood_dataset", "%s.npz" % cat),
+            x=_x,
+            y=_y,
+            # x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
+            # y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
+        )
+
+    return x_train, y_train, x_val, y_val, x_test, y_test
+def seperate_up_down(data_dict):
+    """
+    data_dict: dict, key: scenario, value: data
+    """
+    for key in data_dict.keys():
+        data = data_dict[key]   # shape (ts, num_nodes, num_features)
+        data = data[..., :2].reshape(data.shape[0], -1) # shape (ts, num_nodes)
+        data_dict[key] = data
+
+    return data_dict
