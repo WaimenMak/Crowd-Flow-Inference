@@ -160,5 +160,5 @@ cython_debug/
 .idea
 
 #others
-./sc sensor
+sc_sensor/
 .DS_Store

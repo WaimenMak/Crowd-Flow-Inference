@@ -308,7 +308,7 @@ if __name__ == '__main__':
 
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
-    parent_dir = './sc sensor'
+    parent_dir = 'sc_sensor'
     # adding to the df_dict
     # Loop through each subdirectory in the parent directory
     df_dict = process_sensor_data(parent_dir, df_dict)
@@ -317,8 +317,8 @@ if __name__ == '__main__':
     # in distributino
     # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset_ver2(data_dict)
     # out of distribution
-    train_sc = ['./sc sensor/crossroad1', './sc sensor/crossroad2']
-    test_sc = ['./sc sensor/crossroad3']
+    train_sc = ['./sc_sensor/crossroad1', './sc_sensor/crossroad2']
+    test_sc = ['./sc_sensor/crossroad3']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -327,8 +327,8 @@ if __name__ == '__main__':
     # data_dict = seperate_up_down(data_dict)
     x_train, y_train, x_val, y_val, x_test, y_test = generate_ood_dataset(data_dict, train_sc, test_sc, lags=5)
 
-    # up = data_dict['./sc sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
-    # down = data_dict['./sc sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
+    # up = data_dict['./sc_sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
+    # down = data_dict['./sc_sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
     # x_train : [batch_size, num_timesteps_input, num_nodes], x_train contain the downstream flow at last row.
     # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset(up, down)
 

@@ -607,7 +607,7 @@ def generate_insample_dataset_ver2(data_dict, save_mode=False):
     """
     all_x, all_y = [], []
     for scenario in data_dict.keys():
-        # scenario = './sc sensor/crossroad1'
+        # scenario = './sc_sensor/crossroad1'
         data = data_dict[scenario]
         upstream_data = data[:,0,0].reshape(-1,1)
         downstream_data = data[:,1,1].reshape(-1,1)

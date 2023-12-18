@@ -25,14 +25,14 @@ if __name__ == '__main__':
 
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
-    parent_dir = '../sc sensor'
+    parent_dir = '../sc_sensor'
     # adding to the df_dict
     # Loop through each subdirectory in the parent directory
     df_dict = process_sensor_data(parent_dir, df_dict)
 
     data_dict = gen_data_dict(df_dict)
-    up = data_dict['../sc sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
-    down = data_dict['../sc sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
+    up = data_dict['../sc_sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
+    down = data_dict['../sc_sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
 
     x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset(up, down)
     train_dataset = FlowDataset(x_train, y_train, batch_size=2)

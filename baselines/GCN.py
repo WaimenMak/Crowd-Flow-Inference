@@ -55,7 +55,7 @@ if __name__ == '__main__':
     random.seed(1)
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
-    parent_dir = '../sc sensor'
+    parent_dir = '../sc_sensor'
     # adding to the df_dict
     # Loop through each subdirectory in the parent directory
     df_dict = process_sensor_data(parent_dir, df_dict)
@@ -66,8 +66,8 @@ if __name__ == '__main__':
 
 
     # out of distribution
-    train_sc = ['../sc sensor/crossroad4', '../sc sensor/crossroad2', '../sc sensor/crossroad3', '../sc sensor/crossroad1']
-    test_sc = ['../sc sensor/crossroad5']
+    train_sc = ['../sc_sensor/crossroad4', '../sc_sensor/crossroad2', '../sc_sensor/crossroad3', '../sc_sensor/crossroad1']
+    test_sc = ['../sc_sensor/crossroad5']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -75,7 +75,7 @@ if __name__ == '__main__':
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
 
-    # data_dict['../sc sensor/crossroad4'] = data_dict['../sc sensor/crossroad4'][..., :4]
+    # data_dict['../sc_sensor/crossroad4'] = data_dict['../sc_sensor/crossroad4'][..., :4]
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
