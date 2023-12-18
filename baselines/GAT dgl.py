@@ -1,47 +1,88 @@
 # -*- coding: utf-8 -*-
-# @Time    : 09/12/2023 11:30
+# @Time    : 13/12/2023 15:31
 # @Author  : mmai
-# @FileName: GCN
+# @FileName: GAT
 # @Software: PyCharm
 
-
 import torch
-import dgl.function as fn
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl.nn as dglnn
 
-class GCN(nn.Module):
-    def __init__(self, in_size, hid_size, out_size, scalar):
-        super().__init__()
-        self.layers = nn.ModuleList()
-        # two-layer GCN
-        self.layers.append(
-            dglnn.GraphConv(in_size, hid_size, activation=F.relu)
-        )
-        self.layers.append(dglnn.GraphConv(hid_size, out_size))
-        self.dropout = nn.Dropout(0.5)
+class GATLayer(nn.Module):
+    def __init__(self, g, in_dim, out_dim):
+        super(GATLayer, self).__init__()
+        self.g = g
+        # self.out_dim1 =
+        # 公式 (1)
+        self.fc = nn.Linear(in_dim, out_dim, bias=False)
+        # self.fc2 = nn.Linear(self.out_dim1, out_dim, bias=False)
+        # 公式 (2)
+        self.attn_fc = nn.Linear(2 * out_dim, 1, bias=False)
+
+    def edge_attention(self, edges):
+        # 公式 (2) 所需，边上的用户定义函数
+        z2 = torch.cat([edges.src['z'], edges.dst['z']], dim=2)
+        a = self.attn_fc(z2)
+        return {'e' : F.leaky_relu(a)}
+
+
+    def message_func(self, edges):
+        # 公式 (3), (4)所需，传递消息用的用户定义函数
+        return {'z' : edges.src['z'], 'e' : edges.data['e']}
+
+    def reduce_func(self, nodes):
+        # 公式 (3), (4)所需, 归约用的用户定义函数
+        # 公式 (3)
+        alpha = F.softmax(nodes.mailbox['e'], dim=1)
+        # 公式 (4)
+        h = torch.sum(alpha * nodes.mailbox['z'], dim=1)
+        return {'h' : h}
+
+    def forward(self, h):
+        # 公式 (1)
+        z = self.fc(h)
+        # z = self.fc2(z)
+        self.g.ndata['z'] = z
+        # 公式 (2)
+        self.g.apply_edges(self.edge_attention)
+        # 公式 (3) & (4)
+        self.g.update_all(self.message_func, self.reduce_func)
+        return self.g.ndata.pop('h')
+
+class MultiHeadGATLayer(nn.Module):
+    def __init__(self, g, in_dim, out_dim, num_heads, merge='cat'):
+        super(MultiHeadGATLayer, self).__init__()
+        self.heads = nn.ModuleList()
+        for i in range(num_heads):
+            self.heads.append(GATLayer(g, in_dim, out_dim))
+        self.merge = merge
+
+    def forward(self, h):
+        head_outs = [attn_head(h) for attn_head in self.heads]
+        if self.merge == 'cat':
+            # 对输出特征维度（第1维）做拼接
+            return torch.cat(head_outs, dim=2)
+        else:
+            # 用求平均整合多头结果
+            return torch.mean(torch.stack(head_outs, dim=3), dim=3)
+
+class GAT(nn.Module):
+    def __init__(self, g, in_dim, hidden_dim, out_dim, num_heads, scalar):
+        super(GAT, self).__init__()
+        self.layer1 = MultiHeadGATLayer(g, in_dim, hidden_dim, num_heads, merge="mean")
+        # 注意输入的维度是 hidden_dim * num_heads 因为多头的结果都被拼接在了
+        # 一起。 此外输出层只有一个头。
+        # self.layer2 = MultiHeadGATLayer(g, hidden_dim * num_heads, out_dim, 1)
+        self.layer2 = MultiHeadGATLayer(g, hidden_dim, out_dim, 1, merge="mean")
         self.x_scalar = scalar
 
-    def forward(self, g, features):
-        # with torch.no_grad():
-        #     features = self.x_scalar.transform(features)
-        h = features
-        for i, layer in enumerate(self.layers):
-            if i != 0:
-                h = self.dropout(h)
-            h = layer(g, h, edge_weight=g.edata['distance'])
+    def forward(self, h):
+        with torch.no_grad():
+            h = self.x_scalar.transform(h)
+        h = self.layer1(h)
+        h = F.elu(h)
+        h = self.layer2(h)
         return h
-
-    def inference(self, g, features):
-        # with torch.no_grad():
-        #     features = self.x_scalar.transform(features)
-        h = features
-        for i, layer in enumerate(self.layers):
-            if i != 0:
-                h = self.dropout(h)
-            h = layer(g, h, edge_weight=g.edata['distance'])
-        return h.clamp(min=0)
 
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
@@ -66,11 +107,8 @@ if __name__ == '__main__':
 
 
     # out of distribution
-    train_sc = ['../sc sensor/crossroad4', '../sc sensor/crossroad2', '../sc sensor/crossroad3', '../sc sensor/crossroad1']
+    train_sc = ['../sc sensor/crossroad1', '../sc sensor/crossroad2', '../sc sensor/crossroad3', '../sc sensor/crossroad4']
     test_sc = ['../sc sensor/crossroad5']
-    # for sc in data_dict.keys():
-    #     if sc not in train_sc:
-    #         test_sc.append(sc)
 
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
@@ -79,10 +117,10 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 shuffle=False)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              shuffle=False)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -107,19 +145,19 @@ if __name__ == '__main__':
     g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
 
     # train
-    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=1, scalar=x_scalar)  # out_size: prediction horizon
+    model = GAT(g=g, in_dim=num_input_timesteps, hidden_dim=32, out_dim=1, num_heads=1, scalar=x_scalar)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
     src, dst = g.edges()
-    g = dgl.add_self_loop(g)
-    for epoch in range(1500):
+    # g = dgl.add_self_loop(g)
+    for epoch in range(2000):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
-            pred = model(g, g.ndata['feature']) # [num_dst, batch_size]
+            pred = model(g.ndata['feature']) # [num_dst, batch_size]
             # loss = loss_fn(pred, y[:, 0, :])
             loss = loss_fn(pred[dst, :, 0], g.ndata['label'][dst, :, 0]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()

@@ -141,6 +141,7 @@ class Velocity_Model_NAM(nn.Module):
         self.linear22 = torch.nn.Linear(self._hidden_size, 1)
 
         self.linear3 = torch.nn.Linear(2, 1)
+        # self.linear4 = torch.nn.Linear(2, 1)
         self.relu = torch.nn.ReLU()
         self.x_scalar = scalar
 
@@ -166,6 +167,8 @@ class Velocity_Model_NAM(nn.Module):
 
         x = torch.cat((x_up, x_down), dim=2)
         out = self.linear3(x) # [node, batch_size, 1]
+        # gamma = self.linear4(x).clamp(min=1.) # [node, batch_size, 1]
+        # out =  gamma * out
         out = out.squeeze(2).transpose(1, 0) # [batch_size, node]
         return out
 class Diffusion_Model(torch.nn.Module):
@@ -184,6 +187,7 @@ class Diffusion_Model(torch.nn.Module):
         self.time_units = time_units
         # self.alpha = nn.Parameter(torch.FloatTensor([0.01]), requires_grad=True)
         self.alpha = nn.Parameter(torch.FloatTensor([1.]), requires_grad=True)
+        # self.beta = nn.Parameter(torch.FloatTensor([1.]), requires_grad=True)
         self.device = device
         self.to(self.device)
         self.L = torch.FloatTensor([50]).to(device)  # 50m
@@ -208,7 +212,7 @@ class Diffusion_Model(torch.nn.Module):
         downstream_flows = x[:, :, -1].reshape(-1, self.num_timesteps_input, 1).repeat(1, 1, self.num_nodes)
         # velocity label coming from a gaussian distribution with mean 1.5 and std 0.01
         y = torch.normal(mean=1.5, std=0.1, size=[x.shape[0], 1])
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         loss_fn = torch.nn.MSELoss()
 
         model.train()
@@ -233,6 +237,7 @@ class Diffusion_Model(torch.nn.Module):
 
         for i in range(F.size(0)):
             F_sequence = self.diffusion_sequence(F[i], torch.max((total_time_steps - T_idx[i]), torch.FloatTensor([1])))
+            # F_sequence = torch.ones(total_time_steps)/total_time_steps
             sequences.append(F_sequence)
 
         padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0) # [batch_size, num_timesteps_input]
@@ -282,7 +287,7 @@ class Diffusion_Model(torch.nn.Module):
         T_idx = T_idx.masked_fill(T_idx < 0, 0)
         T_idx = T_idx.masked_fill(T_idx > self.num_timesteps_input, self.num_timesteps_input-1)
         # T_idx = 0 * torch.ones_like(T)
-            # diffusion
+
         for n in range(self.num_nodes):
             diffusion_coefficient.append(self.diffusion_sample(upstream_flows[:, :, n], T[:, n], T_idx[:, n]))
         diffusion_coefficient = torch.stack(diffusion_coefficient, dim=2) # [batch_size, num_timesteps_input, num_nodes]
@@ -299,8 +304,7 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
     from lib.dataloader import FlowDataset
     from lib.utils import gen_data_dict, process_sensor_data, generate_ood_dataset, StandardScaler, generate_insample_dataset_ver2
-    from lib.utils import generating_ood_dataset, seperate_up_down
-    import dgl
+
 
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
@@ -320,9 +324,8 @@ if __name__ == '__main__':
     #         test_sc.append(sc)
 
     #seperate upstream and downstream
-    data_dict = seperate_up_down(data_dict)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generate_ood_dataset(data_dict, train_sc, test_sc)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc)
+    # data_dict = seperate_up_down(data_dict)
+    x_train, y_train, x_val, y_val, x_test, y_test = generate_ood_dataset(data_dict, train_sc, test_sc, lags=5)
 
     # up = data_dict['./sc sensor/crossroad1'][:,0,0].reshape(-1,1) # shape (ts, num_nodes)
     # down = data_dict['./sc sensor/crossroad1'][:,1,1].reshape(-1,1) # shape (ts, 1)
@@ -331,7 +334,7 @@ if __name__ == '__main__':
 
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
-    num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
+    num_nodes = x_train.shape[2]-1 # number of ancestor nodes, minus the down stream node
 
     train_dataset = FlowDataset(np.concatenate([x_train, x_val], axis=0),
                                 np.concatenate([y_train, y_val], axis=0), batch_size=10)
@@ -343,36 +346,26 @@ if __name__ == '__main__':
                               std=np.concatenate([x_train, x_val]).std())
     # train
     model = Diffusion_Model(num_nodes=1, num_timesteps_input=x_train.shape[1], scalar=x_scalar)
-    model.init_velocity_model(x_train, x_val, model.velocity_model)
+    # model.init_velocity_model(x_train, x_val, model.velocity_model)
     model.velocity_model.requires_grad_(True)
     model.alpha.requires_grad_(True)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
-    #processing graph data
-    src = np.array([0, 1])
-    dst = np.array([3, 2])
-
-    g = dgl.graph((src, dst))
-
-    g.ndata['label'] = torch.randn(4, 64)
-    g.edata['feature'] = torch.randn(9, 10, 64)
-    g.edata['label'] = torch.randn(9, 64)
-
-    for epoch in range(2000):
+    for epoch in range(2500):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
-
-            g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
-            g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
-            # caculate directed velocity matrix
-            for node in g.nodes():
-                if not g.predecessors(node):
+            # training loop x: [batch_size, num_timesteps_input, num_nodes]
+            # if epoch % 50 == 0:
+            #     model.alpha.requires_grad_(True)
+            #     model.velocity_model.requires_grad_(False)
+            # else:
+            #     model.alpha.requires_grad_(False)
+            #     model.velocity_model.requires_grad_(True)
 
 
             pred = model(x)
-            # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred, g.ndata['label'][:, 0, :])
+            loss = loss_fn(pred, y[:, 0, :])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -387,37 +380,39 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_dataset, batch_size=4)
     print('*************')
 
-test_loss = []
-model.eval()
-with torch.no_grad():
-    for i, (x, y) in enumerate(train_dataloader):
-        x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
-        x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
-        pred = model(x)
-        loss = loss_fn(pred, y[:, 0, :])
-        v = model.velocity_model(x_up, x_down)
-        print('Train Prediction: {}'.format(pred))
-        print('Train Ground Truth: {}'.format(y[:, 0, :]))
-        print('Train Loss: {}'.format(loss.item()))
-        print('Train Velocity: {}'.format(v))
-        print('*************')
+    test_loss = []
+    model.eval()
+    with torch.no_grad():
+        for i, (x, y) in enumerate(train_dataloader):
+            x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
+            x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
+            pred = model(x)
+            loss = loss_fn(pred, y[:, 0, :])
+            v = model.velocity_model(x_up, x_down)
+            print('Train Prediction: {}'.format(pred))
+            print('Train Ground Truth: {}'.format(y[:, 0, :]))
+            print('Train Loss: {}'.format(loss.item()))
+            print('Train Velocity: {}'.format(v))
+            print('*************')
 
-    for i, (x, y) in enumerate(test_dataloader):
-        x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
-        x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
-        pred = model(x)
-        loss = loss_fn(pred, y[:, 0, :])
-        test_loss.append(loss.item())
-        v = model.velocity_model(x_up, x_down)
-        print('Test Prediction: {}'.format(pred))
-        print('Test Ground Truth: {}'.format(y[:, 0, :]))
-        print('Test Loss: {}'.format(loss.item()))
-        print('Test Velocity: {}'.format(v))
-        print('*************')
+        for i, (x, y) in enumerate(test_dataloader):
+            x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
+            x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
+            pred = model(x)
+            loss = loss_fn(pred, y[:, 0, :])
+            test_loss.append(loss.item())
+            v = model.velocity_model(x_up, x_down)
+            print('Test Prediction: {}'.format(pred))
+            print('Test Ground Truth: {}'.format(y[:, 0, :]))
+            print('Test Loss: {}'.format(loss.item()))
+            print('Test Velocity: {}'.format(v))
+            print('*************')
 
-    print('Total Test Loss: {}'.format(np.mean(test_loss)))
+        print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
 # print model parameters
 # for name, param in model.named_parameters():
 #     if param.requires_grad:
 #         print(name, param.data)
+print(model.alpha)
+# print(model.beta)

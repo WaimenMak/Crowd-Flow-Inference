@@ -603,6 +603,7 @@ def generate_insample_dataset_ver2(data_dict, save_mode=False):
     """
     Upstream data: upstream sensor data (ts, node_num)
     Downstream data: downstream sensor data (ts, 1)
+    with all scenarios
     """
     all_x, all_y = [], []
     for scenario in data_dict.keys():
@@ -678,7 +679,7 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
             if scenario in train_sc:
                 x_train.append(x_t)
                 y_train.append(y_t)
-            else:
+            elif scenario in test_sc:
                 x_test.append(x_t)
                 y_test.append(y_t)
 
@@ -688,7 +689,7 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
             y_train = np.stack(y_train, axis=0)
             all_x.append(x_train)
             all_y.append(y_train)
-        else:
+        elif scenario in test_sc:
             x_test = np.stack(x_test, axis=0)
             y_test = np.stack(y_test, axis=0)
             all_test_x.append(x_test)
@@ -710,13 +711,13 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
 
     return x_train, y_train, x_val, y_val, x_test, y_test
 
-def generating_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
+def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, save_mode=False):
     all_x, all_y, all_test_x, all_test_y = [], [], [], []
     for scenario in data_dict.keys():
         data = data_dict[scenario]
         x_offsets = np.sort(
                 # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
-                np.concatenate((np.arange(-7, 1, 1),))
+                np.concatenate((np.arange(-lags, 1, 1),))
             )
             # Predict the next one hour
         y_offsets = np.sort(np.arange(1, 2, 1))
@@ -731,7 +732,7 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
             if scenario in train_sc:
                 x_train.append(x_t)
                 y_train.append(y_t)
-            else:
+            elif scenario in test_sc:
                 x_test.append(x_t)
                 y_test.append(y_t)
 
@@ -777,6 +778,67 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, save_mode=False):
         )
 
     return x_train, y_train, x_val, y_val, x_test, y_test
+
+def generating_insample_dataset(data_dict, train_sc,
+                                lags=5,
+                                portion=0.7,
+                                shuffle=False,
+                                save_mode=False):
+    all_x, all_y = [], []
+    for scenario in train_sc:
+        data = data_dict[scenario]
+        x_offsets = np.sort(
+                # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
+                np.concatenate((np.arange(-lags, 1, 1),))
+            )
+            # Predict the next one hour
+        y_offsets = np.sort(np.arange(1, 2, 1))
+        min_t = abs(min(x_offsets))
+        max_t = abs(data.shape[0]- abs(max(y_offsets)))
+
+        # max_t = abs(N - abs(max(y_offsets)))  # Exclusive
+        x, y = [], []
+        for t in range(min_t, max_t):
+            x_t = data[t + x_offsets, ...]
+            y_t = data[t + y_offsets, ...]
+            x.append(x_t)
+            y.append(y_t)
+
+        x = np.stack(x, axis=0)
+        y = np.stack(y, axis=0)
+
+        all_x.append(x)
+        all_y.append(y)
+
+    zipped_lists = list(zip(all_x, all_y))
+    if shuffle:
+        random.shuffle(zipped_lists)  # shuffle data
+    all_x, all_y = zip(*zipped_lists)
+
+    x = np.concatenate(all_x, axis=0)
+    y = np.concatenate(all_y, axis=0)
+
+    # divide dataset
+    num_samples, num_nodes = x.shape[0], x.shape[1]  # num_samples = ts - 12*2 +1
+
+    len_train = round(num_samples * portion)
+    len_val = round(num_samples * 0.1)
+    x_train, y_train = x[: len_train, ...], y[: len_train, ...]
+    x_val, y_val = x[len_train: len_train + len_val, ...], y[len_train: len_train + len_val, ...]
+    x_test, y_test = x[len_train + len_val:, ...], y[len_train + len_val:, ...]
+
+    if save_mode:
+        for cat in ["train", "val", "test"]:
+            _x, _y = locals()["x_" + cat], locals()["y_" + cat]
+            np.savez_compressed(
+            os.path.join("./dataset", "%s.npz" % cat),
+            x=_x,
+            y=_y,
+            # x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
+            # y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
+        )
+
+    return x_train, y_train, x_val, y_val, x_test, y_test
 def seperate_up_down(data_dict):
     """
     data_dict: dict, key: scenario, value: data
@@ -787,3 +849,8 @@ def seperate_up_down(data_dict):
         data_dict[key] = data
 
     return data_dict
+
+def get_trainable_params_size(model):
+    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+    total_params = sum(p.numel() for p in trainable_params)
+    return total_params
