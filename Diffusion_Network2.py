@@ -51,7 +51,7 @@ class Velocity_Model_NAM(nn.Module):
     def __init__(self, num_timesteps_input, scalar):
         super(Velocity_Model_NAM, self).__init__()
         # MLP
-        self._hidden_size = 32
+        self._hidden_size = 64
         # self.g = g
         self.linear11 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
         self.ln11 = nn.LayerNorm(self._hidden_size)
@@ -125,35 +125,6 @@ def init_velocity_model(x_train, x_val, g, model):
         optimizer.step()
         print('Pretrain Iteration: {}, Loss: {}'.format(iter, loss.item()))
 
-class Probabilistic_Model(torch.nn.Module):
-    def __init__(self, num_edges, num_timesteps_input, scalar):
-        """
-
-        :param num_nodes: number of ancestor nodes
-        :param num_timesteps_input: time steps of input
-        """
-        super(Probabilistic_Model, self).__init__()
-        self.num_timesteps_input = num_timesteps_input
-        self.num_edges = num_edges
-        #params
-        self.fc = nn.Linear(self.num_timesteps_input, 32, bias=False)
-        self.attn_fc = nn.Linear(2 * 32, 1, bias=False)
-
-        self.device = device
-        self.to(self.device)
-
-    def edge_attention(self, edges):
-        z = torch.cat([edges.src['embedding'], edges.dst['embedding']], dim=2)  # [num_edges, bc, 2 * 16]
-        a = self.attn_fc(z).squeeze(dim=2)  # [num_edges, bc, 1] --> [num_edges, bc]
-        return {'e': func.leaky_relu(a)}
-
-    def forward(self, features):
-        z = self.fc(features)
-        return z
-
-
-
-
 class Diffusion_Model(torch.nn.Module):
     def __init__(self, num_edges, num_timesteps_input, graph, scalar, time_units=10):
         """
@@ -163,8 +134,6 @@ class Diffusion_Model(torch.nn.Module):
         """
         super(Diffusion_Model, self).__init__()
         self.velocity_model = Velocity_Model_NAM(num_timesteps_input, scalar=scalar)
-        self.transition_probability = Probabilistic_Model(num_edges, num_timesteps_input, scalar=scalar)
-        self.scalar = scalar
         # self.residual_block = ResidualBlock(num_timesteps_input, scalar=scalar)
         self.num_timesteps_input = num_timesteps_input
         self.num_edges = num_edges
@@ -173,10 +142,9 @@ class Diffusion_Model(torch.nn.Module):
 
         self.g = graph
         self.g.edata['alpha'] = self.alpha
-        self.fc = nn.Linear(self.num_timesteps_input, 32, bias=False)
+        # self.fc = nn.Linear(self.num_timesteps_input, 32, bias=False)
+        # self.attn_fc = nn.Linear(2 * 32, 1, bias=False)
 
-        self.attn_fc = nn.Linear(2 * 32, 1, bias=False)
-        self.prop_opt = torch.optim.Adam(self.transition_probability.parameters(), lr=0.001, weight_decay=1e-5)
         self.device = device
         self.to(self.device)
 
@@ -254,24 +222,25 @@ class Diffusion_Model(torch.nn.Module):
     #     return {'e': func.leaky_relu(a)}
     def message_func(self, edges):
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
-        return {'message': edges.data['diffusion'], 'upstream': edges.src['feature'], 'atten': edges.data['e']}
-    #
+        return {'message': edges.data['diffusion'], 'upstream': edges.src['feature']}
+
     def reduce_func(self, nodes):
-        alpha = func.softmax(nodes.mailbox['atten'], dim=1) # nodes.mailbox['atten']: [num_dst_nodes, num_neighbors, bc]
-        pred_up2down = torch.sum(nodes.mailbox['message'] * nodes.mailbox['upstream'], dim=3) # [num_dst_nodes, num_neighbors, bc]
-        h = torch.sum(alpha * pred_up2down, dim=1) # [batch_size]
-        # h = torch.sum(pred_up2down, dim=1) # [batch_size]
-        return {'pred': h, 'alpha': alpha}
+        # alpha = func.softmax(nodes.mailbox['atten'], dim=1) # nodes.mailbox['atten']: [num_nodes, num_neighbors, bc]
+        # scale_upstream = alpha.unsqueeze(-1) * nodes.mailbox['upstream']
+        upstream = nodes.mailbox['upstream']
+        pred_up2down = torch.sum(nodes.mailbox['message'] * upstream, dim=3) # [num_nodes, num_neighbors, bc]
+        transition_prob = torch.softmax(pred_up2down, dim=1) # [num_nodes, num_neighbors, bc]
+        # h = torch.sum(alpha * pred_up2down, dim=1) # [batch_size]
+        h = torch.sum(transition_prob * pred_up2down, dim=1) # [batch_size]
+        return {'pred': h}
 
     def forward(self, upstream_flows, downstream_flows):
         # upstream flows : [num of src, batch_size, num_timesteps_input]
         # downstream flows : [num of dst, batch_size, num_timesteps_input]
-        # with torch.no_grad():
-        #     upstream_flows = self.scalar.transform(upstream_flows)
-        #     downstream_flows = self.scalar.transform(downstream_flows)
-        z = self.transition_probability(self.g.ndata['feature'])
-        self.g.ndata['embedding'] = z   # for attention
-        self.g.apply_edges(self.transition_probability.edge_attention)
+
+        # z = self.fc(self.g.ndata['feature'])
+        # self.g.ndata['embedding'] = z   # for attention
+        # self.g.apply_edges(self.edge_attention)
         v = self.velocity_model(upstream_flows,
                                 downstream_flows) # v : [batch_size, num of edges]
 
@@ -313,14 +282,13 @@ class Diffusion_Model(torch.nn.Module):
         return self.g.ndata.pop('pred') # [num_edges, batch_size]
 
     def inference(self, upstream_flows, downstream_flows):
-        # with torch.no_grad():
-        #     upstream_flows = self.scalar.transform(upstream_flows)
-        #     downstream_flows = self.scalar.transform(downstream_flows)
-        z = self.transition_probability(self.g.ndata['feature'])
-        self.g.ndata['embedding'] = z   # for attention
-        self.g.apply_edges(self.transition_probability.edge_attention)
+        # upstream flows : [num of src, batch_size, num_timesteps_input]
+        # downstream flows : [num of dst, batch_size, num_timesteps_input]
+        # z = self.fc(self.g.ndata['feature'])
+        # self.g.ndata['embedding'] = z   # for attention
+        # self.g.apply_edges(self.edge_attention)
         v = self.velocity_model(upstream_flows,
-                                downstream_flows) # v : [batch_size, num of edges]
+                                downstream_flows).clamp(min=0) # v : [batch_size, num of edges]
 
         T = torch.divide(self.g.edata["distance"], v + 1e-5) # T : [batch_size, num of edges]
         #round T to the time interval
@@ -336,11 +304,6 @@ class Diffusion_Model(torch.nn.Module):
 
 
         self.g.update_all(self.message_func, self.reduce_func)
-
-        # residual connection
-        # oupt = oupt + self.residual_block(upstream_flows[:, :, n], downstream_flows[:, :, n])
-
-        # TODO: sum the predictions from all the nodes with transition probability
         return self.g.ndata.pop('pred').clamp(min=0) # [num_edges, batch_size]
 
 
@@ -366,7 +329,7 @@ if __name__ == '__main__':
     # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset_ver2(data_dict)
 
     # out of distribution
-    train_sc = ['sc_sensor/crossroad2']
+    train_sc = ['sc_sensor/crossroad1']
     test_sc = ['sc_sensor/crossroad5']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -412,13 +375,13 @@ if __name__ == '__main__':
 
     # train
     model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, scalar=x_scalar)
-    model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network1.pth"))
+    model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network2.pth"))
     # init_velocity_model(x_train, x_val, g, model.velocity_model)
-
-    optimizer = torch.optim.Adam([
-        {'params': model.velocity_model.parameters()},
-        {'params': [model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}
-    ])
+    model.velocity_model.requires_grad_(True)
+    model.alpha.requires_grad_(True)
+    # model.fc.requires_grad_(False)
+    # model.attn_fc.requires_grad_(False)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
     import time
@@ -426,44 +389,42 @@ if __name__ == '__main__':
     src, dst = g.edges()
     src_idx = src.unique()
     dst_idx = dst.unique()
-    # for epoch in range(500):
-    #     l = []
-    #     for i, (x, y) in enumerate(train_dataloader):
-    #
-    #
-    #         g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
-    #         g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
-    #
-    #         pred = model(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
-    #         # loss = loss_fn(pred, y[:, 0, :])
-    #         loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
-    #         optimizer.zero_grad()
-    #         loss.backward()
-    #         optimizer.step()
-    #
-    #         # update transition probability
-    #         if epoch % 2 == 0:
-    #             pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
-    #             loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
-    #             model.prop_opt.zero_grad()
-    #             loss.backward()
-    #             model.prop_opt.step()
-    #
-    #         l.append(loss.item())
-    #
-    #     if epoch % 100 == 0:
-    #         print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
-    #         torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network1.pth')
-    #
-    # print('Training Time: {}'.format(time.time() - start))
+    for epoch in range(1500):
+        l = []
+        for i, (x, y) in enumerate(train_dataloader):
 
+
+            g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
+            g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
+
+            pred = model(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
+            # loss = loss_fn(pred, y[:, 0, :])
+            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # update transition probability
+            # if epoch % 5 == 0:
+            #     pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
+            #     loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+            #     model.prop_opt.zero_grad()
+            #     loss.backward()
+            #     model.prop_opt.step()
+
+            l.append(loss.item())
+
+        if epoch % 100 == 0:
+            print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
+            torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network2.pth')
+
+    print('Training Time: {}'.format(time.time() - start))
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=4)
     test_dataloader = DataLoader(test_dataset, batch_size=4)
     print('*************')
 
     test_loss = []
-    train_loss = []
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
@@ -473,7 +434,6 @@ if __name__ == '__main__':
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
             loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
-            train_loss.append(loss.item())
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
             v = model.velocity_model(x_up, x_down)
@@ -481,8 +441,6 @@ if __name__ == '__main__':
             print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Train Loss: {}'.format(loss.item()))
             print('Train Velocity: {}'.format(v))
-            print("Probabilities: {}".format(model.g.ndata['alpha'][[0,3],...]))
-
             print('*************')
 
         for i, (x, y) in enumerate(test_dataloader):
@@ -500,16 +458,11 @@ if __name__ == '__main__':
             print('Test Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Test Loss: {}'.format(loss.item()))
             print('Test Velocity: {}'.format(v))
-            print("Probabilities: {}".format(model.g.ndata['alpha'][[0,3],...]))
-            print("upstream flows: {}".format(x_up[0, ...]))
             print('*************')
 
-        print('Total Train Loss: {}'.format(np.mean(train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model))) # 1287
-    # save checkpoint
-    # torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network1.pth')
 
 # print model parameters
 # for name, param in model.named_parameters():

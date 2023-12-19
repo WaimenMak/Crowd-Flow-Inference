@@ -726,13 +726,17 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, save_mode=False
 
         # max_t = abs(N - abs(max(y_offsets)))  # Exclusive
         x_train, y_train, x_test, y_test = [], [], [], []
-        for t in range(min_t, max_t):
-            x_t = data[t + x_offsets, ...]
-            y_t = data[t + y_offsets, ...]
-            if scenario in train_sc:
+
+        if scenario in train_sc:
+            for t in range(min_t, max_t):
+                x_t = data[t + x_offsets, ...]
+                y_t = data[t + y_offsets, ...]
                 x_train.append(x_t)
                 y_train.append(y_t)
-            elif scenario in test_sc:
+        elif scenario in test_sc:
+            for t in range(min_t, max_t):
+                x_t = data[t + x_offsets, ...]
+                y_t = data[t + y_offsets, ...]
                 x_test.append(x_t)
                 y_test.append(y_t)
 
