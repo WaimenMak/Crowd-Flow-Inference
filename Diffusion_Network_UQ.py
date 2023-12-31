@@ -10,8 +10,23 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 import torch.nn.functional as func
 from dgl.nn.functional import edge_softmax
+from torch.nn.utils import clip_grad_norm_
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class NegativeBinomialDistributionLoss(nn.Module):
+    def __init__(self):
+        super(NegativeBinomialDistributionLoss, self).__init__()
+        pass
+    def forward(self, mu, z, alpha): # alpha: predicted, mu: predicted count, z: ground truth
+        # Calculate the negative log likelihood of the negative binomial distribution
+        nll_loss = -(torch.lgamma(z + 1/(alpha+1e-6)) - torch.lgamma(1/(alpha+1e-6)) - torch.lgamma(z + 1) - torch.lgamma(1/(alpha+1e-6)) + \
+                    z * (torch.log(alpha+1e-6) + torch.log(mu+1e-6) - torch.log(1 + alpha * mu)) - 1/(alpha+1e-6) * torch.log(1 + alpha* mu))
+
+        # Take the mean over the batch
+        nll_loss = torch.mean(nll_loss)
+
+        return nll_loss
 
 class Velocity_Model_NAM(nn.Module):
     def __init__(self, num_timesteps_input, hidden_units, scalar):
@@ -58,7 +73,7 @@ class Velocity_Model_NAM(nn.Module):
         x = torch.cat((x_up, x_down), dim=2)
         out = self.linear3(x) # [num of edges, batch_size, 1]
         # out = self.relu(out)
-        # out = torch.log(1 + torch.exp(out))
+        out = torch.log(1 + torch.exp(out))
         out = out.squeeze(2).transpose(1, 0) # [batch_size, num of edges]
 
         return out
@@ -102,6 +117,7 @@ class Probabilistic_Model(torch.nn.Module):
         # up2down = torch.sum(edges.src['feature'] * edges.data['diffusion'], dim=2).unsqueeze(-1) # [num_edges, batch_size]
         # up2down = edge_softmax(self.g, up2down, norm_by='src') # [num_edges, batch_size]
         F = torch.sum(edges.data["diffusion"], dim=2, keepdim=True) # [num_edges, batch_size, num_timesteps_input]
+
         # up = self.fc_up(torch.sigmoid(self.dropout(edges.src['embedding']))) # [num_edges, batch_size, 1]
         # down = self.fc_down(torch.sigmoid(self.dropout(edges.dst['embedding'])))
         # down = self.dropout(down)
@@ -117,38 +133,43 @@ class Probabilistic_Model(torch.nn.Module):
         a = self.attn_fc1(z).squeeze(dim=2)  # [num_edges, bc, 2 * hidden size + 1] --> [num_edges, bc]
         score = edge_softmax(self.g, func.leaky_relu(a), norm_by='src') # [num_edges, bc]
         return {'e': score}
-
     def forward(self, features):
         # with torch.no_grad():
         #     features = self.scalar.transform(features)
         z = self.fc(features)
+        # z = self.ln(z)
         return z
 
 
 
 
-class Diffusion_Model(torch.nn.Module):
+class Diffusion_Model_UQ(torch.nn.Module):
     def __init__(self, num_edges, num_timesteps_input, graph, scalar, time_units=10):
         """
 
         :param num_nodes: number of ancestor nodes
         :param num_timesteps_input: time steps of input
         """
-        super(Diffusion_Model, self).__init__()
+        super(Diffusion_Model_UQ, self).__init__()
         self.velocity_model = Velocity_Model_NAM(num_timesteps_input, hidden_units=32, scalar=scalar)
         # self.velocity_model = Velocity_Model(num_timesteps_input, hidden_units=16, out_units=8, scalar=scalar)
         self.transition_probability = Probabilistic_Model(graph, num_edges, num_timesteps_input, hidden_units=64, scalar=scalar)
         self.scalar = scalar
-        # self.residual_block = ResidualBlock(num_timesteps_input, scalar=scalar)
+
         self.num_timesteps_input = num_timesteps_input
         self.num_edges = num_edges
         self.time_units = time_units
         self.alpha = nn.Parameter(torch.ones(self.num_edges, 1), requires_grad=True)
+        self.sigma_fc = nn.Linear(64, 1)
 
         self.g = graph
         self.g.edata['alpha'] = self.alpha
 
         self.prop_opt = torch.optim.Adam(self.transition_probability.parameters(), lr=0.001, weight_decay=1e-5)
+        # self.prop_opt = torch.optim.Adam([
+        #     {'params': self.transition_probability.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
+        #     {'params': [self.alpha], 'lr': 0.001, 'weight_decay': 1e-5}
+        # ])
         self.device = device
         self.to(self.device)
 
@@ -178,19 +199,21 @@ class Diffusion_Model(torch.nn.Module):
 
             edges_padded_sequences.append(padded_sequences)
 
-        return {'diffusion': torch.stack(edges_padded_sequences, dim=0)}
+        return {'diffusion': torch.stack(edges_padded_sequences, dim=0), "F": F}
 
     def message_func(self, edges):
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
-        return {'message': edges.data['diffusion'], 'upstream': edges.src['feature'], 'atten': edges.data['e']}
+        return {'message': edges.data['diffusion'], 'upstream': edges.src['feature'], 'atten': edges.data['e'], 'embedding': edges.src['embedding']}
     #
     def reduce_func(self, nodes):
         # alpha = func.softmax(nodes.mailbox['atten'], dim=1) # nodes.mailbox['atten']: [num_dst_nodes, num_neighbors, bc]
         alpha = nodes.mailbox['atten']
         pred_up2down = torch.sum(nodes.mailbox['message'] * nodes.mailbox['upstream'], dim=3) # [num_dst_nodes, num_neighbors, bc]
         h = torch.sum(alpha * pred_up2down, dim=1) # [batch_size]
-        # h = torch.sum(pred_up2down, dim=1) # [batch_size]
-        return {'pred': h}
+
+        sigma = torch.log(1 + torch.exp(torch.mean(self.sigma_fc(nodes.mailbox['embedding']).squeeze(), dim=1))) # [batch_size]
+        # h = torch.log(1 + torch.exp(h)) # [batch_size]
+        return {'pred': h, 'sigma': sigma}
 
     def forward(self, upstream_flows, downstream_flows):
         # upstream flows : [num of src, batch_size, num_timesteps_input]
@@ -200,8 +223,7 @@ class Diffusion_Model(torch.nn.Module):
         #     downstream_flows = self.scalar.transform(downstream_flows)
         z = self.transition_probability(self.g.ndata['feature'])
         self.g.ndata['embedding'] = z   # for attention
-        v = self.velocity_model(upstream_flows,
-                                downstream_flows) # v : [batch_size, num of edges]
+        v = self.velocity_model(upstream_flows, downstream_flows) # v : [batch_size, num of edges]
 
         T = torch.divide(self.g.edata["distance"], v + 1e-5) # T : [batch_size, num of edges]
         #round T to the time interval
@@ -210,22 +232,8 @@ class Diffusion_Model(torch.nn.Module):
         #remark: < 0  = 0, > num_timesteps_input = num_timesteps_input-1
         T_idx = T_idx.masked_fill(T_idx < 0, 0)
         T_idx = T_idx.masked_fill(T_idx > self.num_timesteps_input, self.num_timesteps_input-1)
+
         # T_idx = 0 * torch.ones_like(T)
-
-        # Diffusion
-        # F = 1/(1 + self.g.edata['alpha'].T * T) # [num_edges, 1] *  [batch_size, num_edges]
-        # for e in range(self.num_edges):
-            # diffusion_coefficient.append(self.diffusion_batch(F[:, e],
-            #                                                    self.num_timesteps_input,
-            #                                                    bc,
-            #                                                    T_idx[:, e]))
-
-            # diffusion_coefficient.append(self.diffusion_sample(self.g.edata['alpha'][e],
-            #                                                    self.num_timesteps_input,
-            #                                                    bc, T[:, e],
-            #                                                    T_idx[:, e]))
-        # diffusion_coefficient = torch.stack(diffusion_coefficient, dim=0) # [num_edges, batch_size, num_timesteps_input]
-        # self.g.edata["diffusion"] = diffusion_coefficient # [num_edges, batch_size, num_timesteps_input]
 
         self.g.edata["T"] = T.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
         self.g.edata["T_idx"] = T_idx.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
@@ -267,7 +275,7 @@ if __name__ == '__main__': #network 3
     # dataset_name = "crossroad"
     dataset_name = "train_station"
     # train_sc = ['sc_sensor/crossroad2']
-    # test_sc = ['sc_sensor/crossroad12']
+    # test_sc = ['sc_sensor/crossroad3']
     train_sc = ['sc_sensor/train6']
     test_sc = ['sc_sensor/train5']
     # for sc in data_dict.keys():
@@ -350,11 +358,11 @@ if __name__ == '__main__': #network 3
                                                  32,32,49,49,35])
 
     # train
-    model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, scalar=None)
+    model = Diffusion_Model_UQ(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, scalar=None)
     # if dataset_name == "crossroad":
-    #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network3_cross.pth"))
+    #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_uq_cross.pth"))
     # if dataset_name == "train_station":
-    #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network3.pth"))
+    #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_uq.pth"))
 
     # init_velocity_model(x_train, x_val, g, model.velocity_model)
 
@@ -362,7 +370,10 @@ if __name__ == '__main__': #network 3
         {'params': model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
         {'params': [model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}
     ])
-    loss_fn = torch.nn.MSELoss()
+    test_loss_fn = torch.nn.MSELoss()
+    # NLL loss
+    # loss_fn = torch.nn.GaussianNLLLoss()
+    loss_fn = NegativeBinomialDistributionLoss()
 
     import time
     start = time.time()
@@ -373,6 +384,7 @@ if __name__ == '__main__': #network 3
     # train
     for epoch in range(500):
         l = []
+        mse = []
         for i, (x, y) in enumerate(train_dataloader):
 
             # if epoch <= 500:
@@ -380,29 +392,42 @@ if __name__ == '__main__': #network 3
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
             pred = model(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
-            # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
+            # assert torch.isnan(pred).sum() == 0, print(f"epoch: {epoch}, pred: {pred}")
+            # var = g.ndata['sigma']**2
+            # loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], var[dst_idx]) # gaussian loss
+            # loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # poissson loss
+
+            alpha = g.ndata['sigma']
+            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], alpha[dst_idx]) # negative binomial loss
+            mse_loss = test_loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
             optimizer.zero_grad()
             loss.backward()
+            # parameters_to_clip = list(model.velocity_model.parameters()) + [model.alpha]
+            # clip_grad_norm_(parameters_to_clip, max_norm=1, norm_type=2)
             optimizer.step()
 
             # update transition probability
             if epoch % 2 == 0:
                 pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
-                loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+                # var = g.ndata['sigma']**2
+                # loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], var[dst_idx])
+                # loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # poissson loss
+                alpha = g.ndata['sigma']
+                loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], alpha[dst_idx]) # negative binomial loss
                 model.prop_opt.zero_grad()
                 loss.backward()
+                # clip_grad_norm_(model.transition_probability.parameters(), max_norm=1, norm_type=2)
                 model.prop_opt.step()
 
-
             l.append(loss.item())
+            mse.append(mse_loss.item())
 
         if epoch % 100 == 0:
-            print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
+            print('Epoch: {}, Loss: {}, MSE: {}'.format(epoch, np.mean(l), np.mean(mse)))
             if dataset_name == "crossroad":
-                torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3_cross.pth')
+                torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq_cross.pth')
             if dataset_name == "train_station":
-                torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3.pth')
+                torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq.pth')
 
     print('Training Time: {}'.format(time.time() - start))
 
@@ -421,7 +446,7 @@ if __name__ == '__main__': #network 3
             # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+            loss = test_loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
             train_loss.append(loss.item())
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
@@ -440,7 +465,7 @@ if __name__ == '__main__': #network 3
             # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g.ndata['feature'][src], g.ndata['feature'][dst]) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+            loss = test_loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
             test_loss.append(loss.item())
