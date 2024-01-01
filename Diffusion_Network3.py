@@ -58,7 +58,7 @@ class Velocity_Model_NAM(nn.Module):
         x = torch.cat((x_up, x_down), dim=2)
         out = self.linear3(x) # [num of edges, batch_size, 1]
         # out = self.relu(out)
-        # out = torch.log(1 + torch.exp(out))
+        out = torch.log(1 + torch.exp(out))
         out = out.squeeze(2).transpose(1, 0) # [batch_size, num of edges]
 
         return out
@@ -90,10 +90,10 @@ class Probabilistic_Model(torch.nn.Module):
         # self.fc_up  = nn.Linear(self._hidden_size, 1, bias=False)
         # self.fc_down = nn.Linear(self._hidden_size, 1, bias=False)
         self.attn_fc1 = nn.Linear(2 * self._hidden_size + 1, 1, bias=False)
-        # self.attn_fc = nn.Linear(self._hidden_size, 1, bias=False)
+        # self.attn_fc1 = nn.Linear(2 * self._hidden_size, 1, bias=False)
         # self.attn_fc = nn.Linear(3, 1, bias=False)
-        # self.ln = nn.LayerNorm(self._hidden_size)
-        # self.ln2 = nn.LayerNorm(2 * self._hidden_size + 1)
+        # self.ln2 = nn.LayerNorm(2 * self._hidden_size)
+        self.ln2 = nn.LayerNorm(2 * self._hidden_size + 1)
         # self.dropout = nn.Dropout(0.5)
         self.device = device
         self.to(self.device)
@@ -101,19 +101,21 @@ class Probabilistic_Model(torch.nn.Module):
     def edge_attention(self, edges):
         # up2down = torch.sum(edges.src['feature'] * edges.data['diffusion'], dim=2).unsqueeze(-1) # [num_edges, batch_size]
         # up2down = edge_softmax(self.g, up2down, norm_by='src') # [num_edges, batch_size]
-        F = torch.sum(edges.data["diffusion"], dim=2, keepdim=True) # [num_edges, batch_size, num_timesteps_input]
+        # F = torch.sum(edges.data["diffusion"], dim=2, keepdim=True) # [num_edges, batch_size, num_timesteps_input]
+        v = edges.data['v'].unsqueeze(-1) # [num_edges, batch_size, 1]
         # up = self.fc_up(torch.sigmoid(self.dropout(edges.src['embedding']))) # [num_edges, batch_size, 1]
         # down = self.fc_down(torch.sigmoid(self.dropout(edges.dst['embedding'])))
         # down = self.dropout(down)
-        z = torch.cat([edges.src['embedding'], edges.dst['embedding'], F.detach()], dim=2)  # [num_edges, bc, 2 * 16]
-        # z = torch.cat([edges.src['embedding'], edges.dst['embedding'], up2down], dim=2)  # [num_edges, bc, 2 * hid + 1]
+        # z = torch.cat([edges.src['embedding'], edges.dst['embedding'], F.detach()], dim=2)  # [num_edges, bc, 2 * 16]
+        z = torch.cat([edges.src['embedding'], edges.dst['embedding'], v.detach()], dim=2)  # [num_edges, bc, 2 * 16]
+        # z = torch.cat([edges.src['embedding'], edges.dst['embedding']], dim=2)  # [num_edges, bc, 2 * hid + 1]
         # z = edges.src['embedding'] + edges.dst['embedding']
         # z = torch.cat([up, down, up2down], dim=2)  # [num_edges, bc, 3]
         # a = self.attn_fc1(z)
         # a = self.dropout(a)
         # a = self.ln(a)
         # a = torch.sigmoid(a)
-        # z = self.ln2(z)
+        z = self.ln2(z)
         a = self.attn_fc1(z).squeeze(dim=2)  # [num_edges, bc, 2 * hidden size + 1] --> [num_edges, bc]
         score = edge_softmax(self.g, func.leaky_relu(a), norm_by='src') # [num_edges, bc]
         return {'e': score}
@@ -202,6 +204,7 @@ class Diffusion_Model(torch.nn.Module):
         self.g.ndata['embedding'] = z   # for attention
         v = self.velocity_model(upstream_flows,
                                 downstream_flows) # v : [batch_size, num of edges]
+        self.g.edata['v'] = v.permute(1, 0) # [num_edges, batch_size]
 
         T = torch.divide(self.g.edata["distance"], v + 1e-5) # T : [batch_size, num of edges]
         #round T to the time interval
@@ -267,9 +270,9 @@ if __name__ == '__main__': #network 3
     # dataset_name = "crossroad"
     dataset_name = "train_station"
     # train_sc = ['sc_sensor/crossroad2']
-    # test_sc = ['sc_sensor/crossroad12']
+    # test_sc = ['sc_sensor/crossroad3']
     train_sc = ['sc_sensor/train6']
-    test_sc = ['sc_sensor/train5']
+    test_sc = ['sc_sensor/train7']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)

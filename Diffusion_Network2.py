@@ -8,50 +8,61 @@ import torch
 import torch.nn as nn
 # import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
+from dgl.nn.functional import edge_softmax
 import torch.nn.functional as func
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class ResidualBlock(nn.Module):
-    def __init__(self, num_timesteps_input, scalar):
-        super(ResidualBlock, self).__init__()
+class Velocity_Model(nn.Module):
+    def __init__(self, num_timesteps_input, hidden_units, out_units, scalar):
+        super(Velocity_Model, self).__init__()
         # MLP
-        self.linear11 = torch.nn.Linear(num_timesteps_input, 32)
-        self.linear12 = torch.nn.Linear(32, 1)
+        self._hidden_size = hidden_units
+        self.out_size = out_units
+        self.linear11 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
+        self.ln11 = nn.LayerNorm(self._hidden_size)
+        self.linear12 = torch.nn.Linear(self._hidden_size, self.out_size)
 
-        self.linear21 = torch.nn.Linear(num_timesteps_input, 32)
-        self.linear22 = torch.nn.Linear(32, 1)
+        self.linear21 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
+        self.ln21 = nn.LayerNorm(self._hidden_size)
+        self.linear22 = torch.nn.Linear(self._hidden_size, self.out_size)
 
-        self.linear3 = torch.nn.Linear(2, 1)
+        self.linear3 = torch.nn.Linear(2 * self.out_size, 1)
+        self.dropout = nn.Dropout(0.5)
         self.relu = torch.nn.ReLU()
         self.x_scalar = scalar
 
     def forward(self, upstream, downstream):
         # upstream : [batch_size, num_timesteps_input], only from one node
         # downstream : [batch_size, num_timesteps_input]
-        with torch.no_grad():
-            upstream = self.x_scalar.transform(upstream)
-            downstream = self.x_scalar.transform(downstream)
         x_up = self.linear11(upstream)
+        x_up = self.dropout(x_up)
+        x_up = self.ln11(x_up)
         x_up = self.relu(x_up)
         x_up = self.linear12(x_up)
+        # x_up = self.dropout(x_up)
         x_up = torch.sigmoid(x_up)
 
         x_down = self.linear21(downstream)
+        x_down = self.dropout(x_down)
+        x_down = self.ln21(x_down)
         x_down = self.relu(x_down)
         x_down = self.linear22(x_down)
+        # x_down = self.dropout(x_down)
         x_down = torch.sigmoid(x_down)
 
-        x = torch.cat((x_up, x_down), dim=1)
-        out = self.linear3(x)
+        x = torch.cat((x_up, x_down), dim=2)
+        out = self.linear3(x) # [num of edges, batch_size, 1]
         # out = self.relu(out)
+        out = out.squeeze(2).transpose(1, 0) # [batch_size, num of edges]
+
         return out
 
 class Velocity_Model_NAM(nn.Module):
-    def __init__(self, num_timesteps_input, scalar):
+    def __init__(self, num_timesteps_input, hidden_units, scalar):
         super(Velocity_Model_NAM, self).__init__()
         # MLP
-        self._hidden_size = 64
+        self._hidden_size = hidden_units
         # self.g = g
         self.linear11 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
         self.ln11 = nn.LayerNorm(self._hidden_size)
@@ -133,7 +144,8 @@ class Diffusion_Model(torch.nn.Module):
         :param num_timesteps_input: time steps of input
         """
         super(Diffusion_Model, self).__init__()
-        self.velocity_model = Velocity_Model_NAM(num_timesteps_input, scalar=scalar)
+        # self.velocity_model = Velocity_Model_NAM(num_timesteps_input, hidden_units=32, scalar=scalar)
+        self.velocity_model = Velocity_Model(num_timesteps_input, hidden_units=32, out_units=16, scalar=scalar)
         # self.residual_block = ResidualBlock(num_timesteps_input, scalar=scalar)
         self.num_timesteps_input = num_timesteps_input
         self.num_edges = num_edges
@@ -142,8 +154,6 @@ class Diffusion_Model(torch.nn.Module):
 
         self.g = graph
         self.g.edata['alpha'] = self.alpha
-        # self.fc = nn.Linear(self.num_timesteps_input, 32, bias=False)
-        # self.attn_fc = nn.Linear(2 * 32, 1, bias=False)
 
         self.device = device
         self.to(self.device)
@@ -159,7 +169,7 @@ class Diffusion_Model(torch.nn.Module):
 
     def edge_diffusion(self, edges):
         total_time_steps = self.num_timesteps_input
-        F = 1/(1 + edges.data['alpha'] * edges.data['T']) # [num edges, batch_size]
+        F = 1/(1 + edges.data['alpha'].clamp(min=0, max=1) * edges.data['T']) # [num edges, batch_size]
         edges_padded_sequences = []
         for e in range(self.num_edges):
             sequences = []
@@ -216,31 +226,29 @@ class Diffusion_Model(torch.nn.Module):
 
         return padded_sequences # [batch_size, num_timesteps_input]
 
-    # def edge_attention(self, edges):
-    #     z = torch.cat([edges.src['embedding'], edges.dst['embedding']], dim=2)  # [num_edges, bc, 2 * 16]
-    #     a = self.attn_fc(z).squeeze(dim=2)  # [num_edges, bc, 1] --> [num_edges, bc]
-    #     return {'e': func.leaky_relu(a)}
+    def edge_flows(self, edges):
+        up2down = torch.sum(edges.src['feature'] * edges.data['diffusion'], dim=2) # [num_edges, batch_size]
+        score = edge_softmax(self.g, up2down, norm_by='src') # [num_edges, batch_size]
+        return {'e': score, 'up2down': up2down}
+
     def message_func(self, edges):
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
-        return {'message': edges.data['diffusion'], 'upstream': edges.src['feature']}
+        return {'atten': edges.data['e'], 'up2down': edges.data['up2down']}
 
     def reduce_func(self, nodes):
         # alpha = func.softmax(nodes.mailbox['atten'], dim=1) # nodes.mailbox['atten']: [num_nodes, num_neighbors, bc]
         # scale_upstream = alpha.unsqueeze(-1) * nodes.mailbox['upstream']
-        upstream = nodes.mailbox['upstream']
-        pred_up2down = torch.sum(nodes.mailbox['message'] * upstream, dim=3) # [num_nodes, num_neighbors, bc]
-        transition_prob = torch.softmax(pred_up2down, dim=1) # [num_nodes, num_neighbors, bc]
+        # upstream = nodes.mailbox['upstream']
+        pred_up2down = nodes.mailbox["up2down"] # [num_nodes, num_neighbors, bc]
+        transition_prob = nodes.mailbox["atten"] # [num_nodes, num_neighbors, bc]
         # h = torch.sum(alpha * pred_up2down, dim=1) # [batch_size]
-        h = torch.sum(transition_prob * pred_up2down, dim=1) # [batch_size]
+        h = torch.sum(transition_prob * pred_up2down, dim=1) # [num_nodes, batch_size]
         return {'pred': h}
 
     def forward(self, upstream_flows, downstream_flows):
         # upstream flows : [num of src, batch_size, num_timesteps_input]
         # downstream flows : [num of dst, batch_size, num_timesteps_input]
 
-        # z = self.fc(self.g.ndata['feature'])
-        # self.g.ndata['embedding'] = z   # for attention
-        # self.g.apply_edges(self.edge_attention)
         v = self.velocity_model(upstream_flows,
                                 downstream_flows) # v : [batch_size, num of edges]
 
@@ -271,14 +279,10 @@ class Diffusion_Model(torch.nn.Module):
         self.g.edata["T"] = T.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
         self.g.edata["T_idx"] = T_idx.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
         self.g.apply_edges(self.edge_diffusion)
-
+        self.g.apply_edges(self.edge_flows)
 
         self.g.update_all(self.message_func, self.reduce_func)
 
-        # residual connection
-        # oupt = oupt + self.residual_block(upstream_flows[:, :, n], downstream_flows[:, :, n])
-
-        # TODO: sum the predictions from all the nodes with transition probability
         return self.g.ndata.pop('pred') # [num_edges, batch_size]
 
     def inference(self, upstream_flows, downstream_flows):
@@ -287,24 +291,8 @@ class Diffusion_Model(torch.nn.Module):
         # z = self.fc(self.g.ndata['feature'])
         # self.g.ndata['embedding'] = z   # for attention
         # self.g.apply_edges(self.edge_attention)
-        v = self.velocity_model(upstream_flows,
-                                downstream_flows).clamp(min=0) # v : [batch_size, num of edges]
-
-        T = torch.divide(self.g.edata["distance"], v + 1e-5) # T : [batch_size, num of edges]
-        #round T to the time interval
-        T_idx = torch.round(T/self.time_units)
-
-        #remark: < 0  = 0, > num_timesteps_input = num_timesteps_input-1
-        T_idx = T_idx.masked_fill(T_idx < 0, 0)
-        T_idx = T_idx.masked_fill(T_idx > self.num_timesteps_input, self.num_timesteps_input-1)
-
-        self.g.edata["T"] = T.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
-        self.g.edata["T_idx"] = T_idx.permute(1, 0) # [num_edges, batch_size, num_timesteps_input]
-        self.g.apply_edges(self.edge_diffusion)
-
-
-        self.g.update_all(self.message_func, self.reduce_func)
-        return self.g.ndata.pop('pred').clamp(min=0) # [num_edges, batch_size]
+        pred = self.forward(upstream_flows, downstream_flows)
+        return pred.clamp(min=0) # [num_edges, batch_size]
 
 
 if __name__ == '__main__':
@@ -329,8 +317,8 @@ if __name__ == '__main__':
     # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset_ver2(data_dict)
 
     # out of distribution
-    train_sc = ['sc_sensor/crossroad1']
-    test_sc = ['sc_sensor/crossroad5']
+    train_sc = ['sc_sensor/crossroad13']
+    test_sc = ['sc_sensor/crossroad2']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -375,13 +363,16 @@ if __name__ == '__main__':
 
     # train
     model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, scalar=x_scalar)
-    model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network2.pth"))
+    # model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network2.pth"))
     # init_velocity_model(x_train, x_val, g, model.velocity_model)
-    model.velocity_model.requires_grad_(True)
-    model.alpha.requires_grad_(True)
-    # model.fc.requires_grad_(False)
-    # model.attn_fc.requires_grad_(False)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    # optimizer1 = torch.optim.Adam([
+    #     {'params': model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
+    # ])
+    # optimizer2 = torch.optim.Adam([
+    #     {'params': model.alpha, 'lr': 0.001, 'weight_decay': 1e-5},
+    # ])
     loss_fn = torch.nn.MSELoss()
 
     import time
@@ -389,7 +380,7 @@ if __name__ == '__main__':
     src, dst = g.edges()
     src_idx = src.unique()
     dst_idx = dst.unique()
-    for epoch in range(1500):
+    for epoch in range(600):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
 
@@ -402,15 +393,17 @@ if __name__ == '__main__':
             loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()
             loss.backward()
+            # optimizer1.zero_grad()
+            # optimizer1.step()
             optimizer.step()
 
             # update transition probability
             # if epoch % 5 == 0:
             #     pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
             #     loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
-            #     model.prop_opt.zero_grad()
+            #     optimizer2.zero_grad()
             #     loss.backward()
-            #     model.prop_opt.step()
+            #     optimizer2.step()
 
             l.append(loss.item())
 
@@ -425,6 +418,7 @@ if __name__ == '__main__':
     print('*************')
 
     test_loss = []
+    train_loss = []
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
@@ -436,6 +430,7 @@ if __name__ == '__main__':
             loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
+            train_loss.append(loss.item())
             v = model.velocity_model(x_up, x_down)
             print('Train Prediction: {}'.format(pred[dst_idx]))
             print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
@@ -460,6 +455,7 @@ if __name__ == '__main__':
             print('Test Velocity: {}'.format(v))
             print('*************')
 
+        print('Total Train Loss: {}'.format(np.mean(train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model))) # 1287

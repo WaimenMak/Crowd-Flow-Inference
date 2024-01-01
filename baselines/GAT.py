@@ -15,15 +15,19 @@ class GATLayer(nn.Module):
         # self.bc = bc
         self.feat = input_dim  # seq_len * features
         self.output_dim = output_dim
+        self.hidden_dim = 32
         self.mask = torch.zeros([self.nodes, self.nodes])
         self.mask[self.adj.row, self.adj.col] = 1
 
-        self.W = nn.Parameter(torch.FloatTensor(size=(input_dim, output_dim))) # could be change to RNN encoder
+        # self.W = nn.Parameter(torch.FloatTensor(size=(input_dim, output_dim))) # could be change to RNN encoder
+        self.mlp = nn.Sequential(nn.Linear(input_dim, self.hidden_dim), nn.LayerNorm(self.hidden_dim),
+                                 nn.ReLU(), nn.Linear(self.hidden_dim, output_dim)) # [bc, node, output_dim*2] --> [bc, node, output_dim]
+
         self.atten_W = nn.Parameter(torch.FloatTensor(size=(2*self.output_dim, 1)))
         self.leaky_relu = nn.LeakyReLU(0.1)
         # nn.init.kaiming_normal_(self.W, mode='fan_in', nonlinearity='leaky_relu')
         # nn.init.kaiming_normal_(self.atten_W, mode='fan_in', nonlinearity='leaky_relu')
-        nn.init.xavier_normal_(self.W.data, gain=1.414)
+        # nn.init.xavier_normal_(self.W.data, gain=1.414)
         nn.init.xavier_normal_(self.atten_W.data, gain=1.414)
         # nn.init.normal_(self.W)
         # nn.init.normal_(self.atten_W)
@@ -32,9 +36,9 @@ class GATLayer(nn.Module):
         bc = z.shape[0]
         b = z.repeat([1, 1, self.nodes]).reshape([bc, self.nodes, self.nodes, self.output_dim]) #
         c = z.repeat([1, self.nodes, 1]).reshape([bc, self.nodes, self.nodes, self.output_dim]) #
-        e = torch.cat([b,c],dim=3).reshape(self.bc, -1, 2*self.output_dim) # [bc, node*node, output_dim*2]
+        e = torch.cat([b,c],dim=3).reshape(bc, -1, 2*self.output_dim) # [bc, node*node, output_dim*2]
         # mask = mask.repeat([self.bc, 1, 1])
-        atten_mat = self.leaky_relu(torch.matmul(e, self.atten_W).reshape(self.bc, self.nodes, self.nodes)) * self.mask.unsqueeze(0) #[bc, node, node] batch attention scores
+        atten_mat = self.leaky_relu(torch.matmul(e, self.atten_W).reshape(bc, self.nodes, self.nodes)) * self.mask.unsqueeze(0) #[bc, node, node] batch attention scores
         # atten_mat = self.leaky_relu(torch.matmul(e, self.atten_W).reshape(bc, self.nodes, self.nodes)) # not just consider neighbors
         atten_mat.data.masked_fill_(torch.eq(atten_mat, 0), -float(1e16))
 
@@ -62,7 +66,8 @@ class GATLayer(nn.Module):
         '''
         # h = data.transpose(0, 2, 1, 3).view(self.bc, self.nodes, -1) #[bc, node, feat]
         bc = h.shape[0]
-        z = torch.matmul(h.reshape(bc*self.nodes, self.feat), self.W)  # z = Wh  #[bc*node, output_dim]
+        # z = torch.matmul(h.reshape(bc*self.nodes, self.feat), self.W)  # z = Wh  #[bc*node, output_dim]
+        z = self.mlp(h.reshape(bc*self.nodes, self.feat))  #[bc*node, output_dim]
         z = z.reshape(bc, self.nodes, self.output_dim)  # [bc, nodes, output_dim]
         # atten_mat = self.edge_attention_concatenate(z)
         atten_mat = self.edge_attention_innerprod(z)
@@ -144,8 +149,12 @@ if __name__ == '__main__':
 
 
     # out of distribution
-    train_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad2', '../sc_sensor/crossroad3', '../sc_sensor/crossroad4']
-    test_sc = ['../sc_sensor/crossroad5']
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
+    train_sc = ['../sc_sensor/train6']
+    test_sc = ['../sc_sensor/train7']
+    # train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
+    # test_sc = ['../sc_sensor/crossroad3']
 
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
@@ -154,16 +163,19 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=5,
-    #                                                                              shuffle=False)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+                                                                                 lags=5,
+                                                                                 portion=0.5,
+                                                                                 shuffle=False)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
 
-    train_dataset = FlowDataset(np.concatenate([x_train, x_val], axis=0),
-                                np.concatenate([y_train, y_val], axis=0), batch_size=16)
+    # train_dataset = FlowDataset(np.concatenate([x_train, x_val], axis=0),
+    #                             np.concatenate([y_train, y_val], axis=0), batch_size=16)
+    train_dataset = FlowDataset(x_train,
+                                y_train, batch_size=16)
     train_dataloader = DataLoader(train_dataset, batch_size=16)
     # set seed
     torch.manual_seed(1)
@@ -175,21 +187,71 @@ if __name__ == '__main__':
     # src = np.array([0, 2])
     # dst = np.array([3, 1])
 
-    src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
-    dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
+    if dataset_name == "crossroad":
+        src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
+        dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
+        g = dgl.graph((src, dst))
+        g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
 
-    g = dgl.graph((src, dst))
-    g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
+    if dataset_name == "train_station":
+        src = np.array([3,3,3,
+                        4,4,4,
+                        7,7,7,
+                        22,22,22,
+                        23,23,23,23,23,
+                        8,8,8,8,8,
+                        11, 11, 11, 11, 11,
+                        14, 14, 14, 14, 14,
+                        18, 18, 18,
+                        17, 17, 17, 17, 17,
+                        13, 13, 13,
+                        21, 21, 21,
+                        0, 0, 0,
+                        12, 12, 12, 12, 12])
+        dst = np.array([5,6,23,
+                        2,6,23,
+                        2,5,23,
+                        2,5,6,
+                        9,10,15,16,13,
+                        22,10,13,15,16,
+                        22,9,15,16,13,
+                        22,9,10,16,13,
+                        12,1,20,
+                        13,15,9,10,22,
+                        20,1,19,
+                        19,1,12,
+                        12,19,20,
+                        15,16,9,10,22])
 
+        g = dgl.graph((src, dst))
+        g.edata['distance'] = torch.FloatTensor([40,40,28, # 3
+                                                 40,50,32, # 4
+                                                 40,50,32,
+                                                 28,32,32,
+                                                 24,24,41,41,35,
+                                                 24,50,49,54,65,
+                                                 24,50,65,54,49,
+                                                 41,54,65,50,32,
+                                                 25,47,50,
+                                                 32,50,65,54,41,
+                                                 25,32,25,
+                                                 50,47,25,
+                                                 32,47,47,
+                                                 32,32,49,49,35])
+
+    src, dst = g.edges()
+    src_idx = np.unique(src)
+    dst_idx = np.unique(dst)
     adj_mat = g.adjacency_matrix(transpose=False, scipy_fmt="coo")
+
     # train
-    model = GAT(g=adj_mat, seq_len=6, feature_size=1, hidden_dim=32, out_dim=1, nodes=8, num_heads=4)  # out_size: prediction horizon
+    model = GAT(g=adj_mat, seq_len=6, feature_size=1, hidden_dim=32, out_dim=1, nodes=num_nodes, num_heads=4)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
-    src, dst = g.edges()
+
     # g = dgl.add_self_loop(g)
-    for epoch in range(2000):
+    for epoch in range(1500):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             # g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -197,7 +259,7 @@ if __name__ == '__main__':
             y = y.permute(2, 0, 1)
             pred = model(x.permute(0, 2, 1)) # inpt : [batch_size, node, num_timesteps_input]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst, :, 0], y[dst, :, 0]) # [num_dst, batch_size], one-step prediction
+            loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -212,16 +274,17 @@ if __name__ == '__main__':
 
 
     test_loss = []
+    train_loss = []
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
             y = y.permute(2, 0, 1)
             pred = model.inference(x.permute(0, 2, 1)) # inpt : [batch_size, node, num_timesteps_input]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst, :, 0], y[dst, :, 0])
-
-            print('Train Prediction: {}'.format(pred[dst]))
-            print('Train Ground Truth: {}'.format(y[dst,:, 0]))
+            loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0])
+            train_loss.append(loss.item())
+            print('Train Prediction: {}'.format(pred[dst_idx]))
+            print('Train Ground Truth: {}'.format(y[dst_idx,:, 0]))
             print('Train Loss: {}'.format(loss.item()))
             print('*************')
 
@@ -229,15 +292,16 @@ if __name__ == '__main__':
             y = y.permute(2, 0, 1)
             pred = model.inference(x.permute(0, 2, 1)) # inpt : [batch_size, node, num_timesteps_input]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst, :, 0], y[dst, :, 0])
+            loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0])
 
             test_loss.append(loss.item())
 
-            print('Test Prediction: {}'.format(pred[dst]))
-            print('Test Ground Truth: {}'.format(y[dst,:, 0]))
+            print('Test Prediction: {}'.format(pred[dst_idx]))
+            print('Test Ground Truth: {}'.format(y[dst_idx,:, 0]))
             print('Test Loss: {}'.format(loss.item()))
             print('*************')
 
+        print('Total Train Loss: {}'.format(np.mean(train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))

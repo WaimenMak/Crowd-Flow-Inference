@@ -458,16 +458,16 @@ def train(model):
     test_mse_loss = test_mse_loss / test_iters
     print(f"test_MSE: {test_mse_loss}, Time: {total_train_time}")
 
-def sliding_win(data: numpy.ndarray) -> tuple:
+def sliding_win(data: numpy.ndarray, lags, horizons) -> tuple:
     """
     slicing the data by sliding window
     """
     x_offsets = np.sort(
             # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
-            np.concatenate((np.arange(-11, 1, 1),))
+            np.concatenate((np.arange(-lags, 1, 1),))
         )
     # Predict the next one hour
-    y_offsets = np.sort(np.arange(1, 13, 1))
+    y_offsets = np.sort(np.arange(1, horizons, 1))
     min_t = abs(min(x_offsets))
     max_t = abs(data.shape[0]- abs(max(y_offsets)))
 
@@ -711,7 +711,7 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
 
     return x_train, y_train, x_val, y_val, x_test, y_test
 
-def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, save_mode=False):
+def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8, save_mode=False):
     all_x, all_y, all_test_x, all_test_y = [], [], [], []
     for scenario in data_dict.keys():
         data = data_dict[scenario]
@@ -764,7 +764,7 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, save_mode=False
 
 
     num_samples, num_nodes = x.shape[0], x.shape[2]  # num_samples = ts - 12*2 +1
-    len_train = round(num_samples * 0.8)
+    len_train = round(num_samples * portion)
     # len_val = round(num_samples * 0.1)
     x_train, y_train = x[: len_train, ...], y[: len_train, ...]
     x_val, y_val = x[len_train:, ...], y[len_train:, ...]

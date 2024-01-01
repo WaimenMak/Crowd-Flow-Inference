@@ -107,8 +107,9 @@ if __name__ == '__main__':
 
 
     # out of distribution
-    train_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad2', '../sc_sensor/crossroad3', '../sc_sensor/crossroad4']
-    test_sc = ['../sc_sensor/crossroad5']
+    train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad4', '../sc_sensor/crossroad5', '../sc_sensor/crossroad6',
+                '../sc_sensor/crossroad7', '../sc_sensor/crossroad8', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10']
+    test_sc = ['../sc_sensor/crossroad3']
 
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
@@ -150,8 +151,10 @@ if __name__ == '__main__':
     loss_fn = torch.nn.MSELoss()
 
     src, dst = g.edges()
-    # g = dgl.add_self_loop(g)
-    for epoch in range(2000):
+    src_idx = src.unique()
+    dst_idx = dst.unique()
+    g = dgl.add_self_loop(g)
+    for epoch in range(1000):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -159,7 +162,7 @@ if __name__ == '__main__':
 
             pred = model(g.ndata['feature']) # [num_dst, batch_size]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst, :, 0], g.ndata['label'][dst, :, 0]) # [num_dst, batch_size], one-step prediction
+            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -174,17 +177,19 @@ if __name__ == '__main__':
     print('*************')
 
     test_loss = []
+    train_loss = []
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
-            pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst, :, 0], g.ndata['label'][dst, :, 0])
+            pred = model.inference(g.ndata['feature']) # [num_dst, batch_size]
+            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0])
+            train_loss.append(loss.item())
 
-            print('Train Prediction: {}'.format(pred[dst]))
-            print('Train Ground Truth: {}'.format(g.ndata['label'][dst,:, 0]))
+            print('Train Prediction: {}'.format(pred[dst_idx]))
+            print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Train Loss: {}'.format(loss.item()))
             print('*************')
 
@@ -192,16 +197,17 @@ if __name__ == '__main__':
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
-            pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst, :, 0], g.ndata['label'][dst, :, 0])
+            pred = model.inference(g.ndata['feature']) # [num_dst, batch_size]
+            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0])
 
             test_loss.append(loss.item())
 
-            print('Test Prediction: {}'.format(pred[dst]))
-            print('Test Ground Truth: {}'.format(g.ndata['label'][dst,:, 0]))
+            print('Test Prediction: {}'.format(pred[dst_idx]))
+            print('Test Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Test Loss: {}'.format(loss.item()))
             print('*************')
 
+        print('Total Train Loss: {}'.format(np.mean(train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
-    print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))  # 1025
+    print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))  # 1025    print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))  # 1025

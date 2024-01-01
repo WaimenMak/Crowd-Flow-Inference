@@ -19,8 +19,10 @@ class GCN(nn.Module):
         self.layers.append(
             dglnn.GraphConv(in_size, hid_size, activation=F.relu)
         )
+        self.layers.append(dglnn.GraphConv(hid_size, hid_size, activation=F.relu))
         # self.layers.append(dglnn.GraphConv(hid_size, hid_size, activation=F.relu))
         self.layers.append(dglnn.GraphConv(hid_size, out_size))
+        # self.ln = nn.LayerNorm(out_size)
         self.dropout = nn.Dropout(0.5)
         self.x_scalar = scalar
 
@@ -31,17 +33,14 @@ class GCN(nn.Module):
         for i, layer in enumerate(self.layers):
             if i != 0:
                 h = self.dropout(h)
+            # h = self.ln(h)
             h = layer(g, h, edge_weight=g.edata['distance'])
         return h
 
     def inference(self, g, features):
         # with torch.no_grad():
         #     features = self.x_scalar.transform(features)
-        h = features
-        for i, layer in enumerate(self.layers):
-            if i != 0:
-                h = self.dropout(h)
-            h = layer(g, h, edge_weight=g.edata['distance'])
+        h = self.forward(g, features)
         return h.clamp(min=0)
 
 if __name__ == '__main__':
@@ -62,13 +61,13 @@ if __name__ == '__main__':
     df_dict = process_sensor_data(parent_dir, df_dict)
 
     data_dict = gen_data_dict(df_dict)
-    # in distributino
-    # x_train, y_train, x_val, y_val, x_test, y_test = generate_insample_dataset_ver2(data_dict)
 
-
-    # out of distribution
-    train_sc = ['../sc_sensor/crossroad1']
-    test_sc = ['../sc_sensor/crossroad5']
+    dataset_name = "crossroad"
+    # dataset_name = "train_station"
+    # train_sc = ['../sc_sensor/train6']
+    # test_sc = ['../sc_sensor/train5']
+    train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
+    test_sc = ['../sc_sensor/crossroad3']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -83,13 +82,14 @@ if __name__ == '__main__':
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=5,
+    #                                                                              portion=0.5,
     #                                                                              shuffle=False)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
 
-    train_dataset = FlowDataset(np.concatenate([x_train, x_val], axis=0),
-                                np.concatenate([y_train, y_val], axis=0), batch_size=16)
+    train_dataset = FlowDataset(x_train,
+                                y_train, batch_size=16)
     train_dataloader = DataLoader(train_dataset, batch_size=16)
     # set seed
     torch.manual_seed(1)
@@ -101,11 +101,56 @@ if __name__ == '__main__':
     # src = np.array([0, 2])
     # dst = np.array([3, 1])
 
-    src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
-    dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
+    if dataset_name == "crossroad":
+        src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
+        dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
+        g = dgl.graph((src, dst))
+        g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
 
-    g = dgl.graph((src, dst))
-    g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
+    if dataset_name == "train_station":
+        src = np.array([3,3,3,
+                        4,4,4,
+                        7,7,7,
+                        22,22,22,
+                        23,23,23,23,23,
+                        8,8,8,8,8,
+                        11, 11, 11, 11, 11,
+                        14, 14, 14, 14, 14,
+                        18, 18, 18,
+                        17, 17, 17, 17, 17,
+                        13, 13, 13,
+                        21, 21, 21,
+                        0, 0, 0,
+                        12, 12, 12, 12, 12])
+        dst = np.array([5,6,23,
+                        2,6,23,
+                        2,5,23,
+                        2,5,6,
+                        9,10,15,16,13,
+                        22,10,13,15,16,
+                        22,9,15,16,13,
+                        22,9,10,16,13,
+                        12,1,20,
+                        13,15,9,10,22,
+                        20,1,19,
+                        19,1,12,
+                        12,19,20,
+                        15,16,9,10,22])
+        g = dgl.graph((src, dst))
+        g.edata['distance'] = torch.FloatTensor([40,40,28, # 3
+                                                 40,50,32, # 4
+                                                 40,50,32,
+                                                 28,32,32,
+                                                 24,24,41,41,35,
+                                                 24,50,49,54,65,
+                                                 24,50,65,54,49,
+                                                 41,54,65,50,32,
+                                                 25,47,50,
+                                                 32,50,65,54,41,
+                                                 25,32,25,
+                                                 50,47,25,
+                                                 32,47,47,
+                                                 32,32,49,49,35])
 
     # train
     model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=1, scalar=x_scalar)  # out_size: prediction horizon
@@ -116,7 +161,7 @@ if __name__ == '__main__':
     src_idx = src.unique()
     dst_idx = dst.unique()
     g = dgl.add_self_loop(g)
-    for epoch in range(2000):
+    for epoch in range(1500):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -139,6 +184,7 @@ if __name__ == '__main__':
     print('*************')
 
     test_loss = []
+    train_loss = []
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
@@ -147,6 +193,7 @@ if __name__ == '__main__':
 
             pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
             loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0])
+            train_loss.append(loss.item())
 
             print('Train Prediction: {}'.format(pred[dst_idx]))
             print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
@@ -167,6 +214,7 @@ if __name__ == '__main__':
             print('Test Loss: {}'.format(loss.item()))
             print('*************')
 
+        print('Total Train Loss: {}'.format(np.mean(train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))  # 1025
