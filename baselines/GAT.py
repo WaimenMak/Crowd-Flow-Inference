@@ -163,11 +163,11 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 portion=0.5,
-                                                                                 shuffle=False)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, shuffle=True)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              portion=0.5,
+    #                                                                              shuffle=False)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -245,13 +245,13 @@ if __name__ == '__main__':
     adj_mat = g.adjacency_matrix(transpose=False, scipy_fmt="coo")
 
     # train
-    model = GAT(g=adj_mat, seq_len=6, feature_size=1, hidden_dim=32, out_dim=1, nodes=num_nodes, num_heads=4)  # out_size: prediction horizon
+    model = GAT(g=adj_mat, seq_len=6, feature_size=1, hidden_dim=32, out_dim=1, nodes=num_nodes, num_heads=3)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
 
     # g = dgl.add_self_loop(g)
-    for epoch in range(1500):
+    for epoch in range(1000):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             # g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -269,8 +269,8 @@ if __name__ == '__main__':
             print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
 
     # test
-    test_dataset = FlowDataset(x_test, y_test, batch_size=4)
-    test_dataloader = DataLoader(test_dataset, batch_size=4)
+    test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
+    test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
 
 
     test_loss = []

@@ -711,7 +711,8 @@ def generate_ood_dataset(data_dict, train_sc, test_sc, lags=7, save_mode=False):
 
     return x_train, y_train, x_val, y_val, x_test, y_test
 
-def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8, save_mode=False):
+def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=2,
+                           portion=0.8, shuffle=False, save_mode=False):
     all_x, all_y, all_test_x, all_test_y = [], [], [], []
     for scenario in data_dict.keys():
         data = data_dict[scenario]
@@ -719,8 +720,9 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8, sa
                 # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
                 np.concatenate((np.arange(-lags, 1, 1),))
             )
-            # Predict the next one hour
-        y_offsets = np.sort(np.arange(1, 2, 1))
+        '''multi step pred, horizons starts with 2'''
+        assert horizons >= 2, print("horizons should be larger or equal 2")
+        y_offsets = np.sort(np.arange(1, horizons, 1))
         min_t = abs(min(x_offsets))
         max_t = abs(data.shape[0]- abs(max(y_offsets)))
 
@@ -755,7 +757,8 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8, sa
 
 
     zipped_lists = list(zip(all_x, all_y))
-    # random.shuffle(zipped_lists)  # shuffle data
+    if shuffle:
+        random.shuffle(zipped_lists)  # shuffle data
     all_x, all_y = zip(*zipped_lists)
 
     x = np.concatenate(all_x, axis=0)
@@ -785,6 +788,7 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, portion=0.8, sa
 
 def generating_insample_dataset(data_dict, train_sc,
                                 lags=5,
+                                horizons=2,
                                 portion=0.7,
                                 shuffle=False,
                                 save_mode=False):
@@ -796,7 +800,7 @@ def generating_insample_dataset(data_dict, train_sc,
                 np.concatenate((np.arange(-lags, 1, 1),))
             )
             # Predict the next one hour
-        y_offsets = np.sort(np.arange(1, 2, 1))
+        y_offsets = np.sort(np.arange(1, horizons, 1))
         min_t = abs(min(x_offsets))
         max_t = abs(data.shape[0]- abs(max(y_offsets)))
 
@@ -815,8 +819,6 @@ def generating_insample_dataset(data_dict, train_sc,
         all_y.append(y)
 
     zipped_lists = list(zip(all_x, all_y))
-    if shuffle:
-        random.shuffle(zipped_lists)  # shuffle data
     all_x, all_y = zip(*zipped_lists)
 
     x = np.concatenate(all_x, axis=0)
@@ -830,6 +832,18 @@ def generating_insample_dataset(data_dict, train_sc,
     x_train, y_train = x[: len_train, ...], y[: len_train, ...]
     x_val, y_val = x[len_train: len_train + len_val, ...], y[len_train: len_train + len_val, ...]
     x_test, y_test = x[len_train + len_val:, ...], y[len_train + len_val:, ...]
+
+    '''shuffle x train and x val:'''
+    if shuffle:
+        train_idx = np.arange(x_train.shape[0])
+        np.random.shuffle(train_idx)
+        x_train = x_train[train_idx]
+        y_train = y_train[train_idx]
+
+        val_idx = np.arange(x_val.shape[0])
+        np.random.shuffle(val_idx)
+        x_val = x_val[val_idx]
+        y_val = y_val[val_idx]
 
     if save_mode:
         for cat in ["train", "val", "test"]:

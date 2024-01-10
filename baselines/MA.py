@@ -8,10 +8,16 @@ import numpy as np
 import time
 import torch
 class Moving_Average():
-    def __init__(self):
-        pass
+    def __init__(self, horizons=2):
+        self.horizons = horizons
     def inference(self, data):
-        return torch.mean(data, dim=-1) # [num_nodes, batch_size]
+        pred = []
+        pred.append(torch.mean(data, dim=-1))
+        data = torch.cat([data, pred[0].unsqueeze(-1)], dim=-1)
+        for i in range(1, self.horizons-1):
+            pred.append(torch.mean(data, dim=-1))
+            data = torch.cat([data, pred[i].unsqueeze(-1)], dim=-1)
+        return torch.stack(pred, dim=-1) # [num_nodes, batch_size]
 
 
 if __name__ == '__main__':
@@ -34,8 +40,8 @@ if __name__ == '__main__':
 
     # dataset_name = "crossroad"
     dataset_name = "train_station"
-    train_sc = ['../sc_sensor/train6']
-    test_sc = ['../sc_sensor/train7']
+    train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
+    test_sc = ['../sc_sensor/train5']
     # train_sc = ['../sc_sensor/crossroad2']
     # test_sc = ['../sc_sensor/crossroad3']
     # for sc in data_dict.keys():
@@ -49,11 +55,13 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 portion=0.5,
-                                                                                 shuffle=False)
+    pred_horizon = 3 # 3, 5
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              horizons=pred_horizon,
+    #                                                                              portion=0.6,
+    #                                                                              shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -114,7 +122,7 @@ if __name__ == '__main__':
     # g.edata['distance'] = torch.FloatTensor([50, 50]) # 50m
 
     # train
-    model = Moving_Average()
+    model = Moving_Average(horizons=pred_horizon)
 
     start = time.time()
     src, dst = g.edges()
@@ -123,11 +131,13 @@ if __name__ == '__main__':
     loss_fn = torch.nn.MSELoss()
 
     # test
-    test_dataset = FlowDataset(x_test, y_test, batch_size=4)
-    test_dataloader = DataLoader(test_dataset, batch_size=4)
+    test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
+    test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
     print('*************')
 
     test_loss = []
+    multi_steps_train_loss = []
+    multi_steps_test_loss = []
     # model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
@@ -136,7 +146,9 @@ if __name__ == '__main__':
             # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+            loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
+            multi_steps_loss = loss_fn(pred[dst_idx,:, :], g.ndata['label'][dst_idx,:, :])
+            multi_steps_train_loss.append(multi_steps_loss.item())
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
 
@@ -152,7 +164,10 @@ if __name__ == '__main__':
             # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
+            loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
+            multi_steps_loss = loss_fn(pred[dst_idx,:, :], g.ndata['label'][dst_idx,:, :])
+            multi_steps_test_loss.append(multi_steps_loss.item())
+
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
             test_loss.append(loss.item())
@@ -164,3 +179,4 @@ if __name__ == '__main__':
             print('*************')
 
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
+        print('Multi-Step Test Loss: {}'.format(np.mean(multi_steps_test_loss)))

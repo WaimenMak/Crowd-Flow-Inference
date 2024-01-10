@@ -62,12 +62,12 @@ if __name__ == '__main__':
 
     data_dict = gen_data_dict(df_dict)
 
-    dataset_name = "crossroad"
-    # dataset_name = "train_station"
-    # train_sc = ['../sc_sensor/train6']
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
+    train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
     # test_sc = ['../sc_sensor/train5']
-    train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
-    test_sc = ['../sc_sensor/crossroad3']
+    # train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
+    # test_sc = ['../sc_sensor/crossroad3']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -79,11 +79,13 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=5,
-    #                                                                              portion=0.5,
-    #                                                                              shuffle=False)
+    pred_horizon = 3 # 3, 5
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, shuffle=True)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+                                                                                 lags=5,
+                                                                                 horizons=pred_horizon,
+                                                                                 portion=0.6,
+                                                                                 shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -153,7 +155,7 @@ if __name__ == '__main__':
                                                  32,32,49,49,35])
 
     # train
-    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=1, scalar=x_scalar)  # out_size: prediction horizon
+    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=pred_horizon - 1, scalar=x_scalar)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
@@ -161,7 +163,8 @@ if __name__ == '__main__':
     src_idx = src.unique()
     dst_idx = dst.unique()
     g = dgl.add_self_loop(g)
-    for epoch in range(1500):
+    # train
+    for epoch in range(800):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -169,7 +172,7 @@ if __name__ == '__main__':
 
             pred = model(g, g.ndata['feature']) # [num_dst, batch_size]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0]) # [num_dst, batch_size], one-step prediction
+            loss = loss_fn(pred[dst_idx, :, :], g.ndata['label'][dst_idx, :, :]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -179,42 +182,63 @@ if __name__ == '__main__':
             print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
 
     # test
-    test_dataset = FlowDataset(x_test, y_test, batch_size=4)
-    test_dataloader = DataLoader(test_dataset, batch_size=4)
+    test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
+    test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
     print('*************')
 
     test_loss = []
     train_loss = []
+    multi_steps_train_loss = []
+    multi_steps_test_loss = []
     model.eval()
+
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
             pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0])
+            loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             train_loss.append(loss.item())
 
-            print('Train Prediction: {}'.format(pred[dst_idx]))
+            # multi_steps_pred = torch.cat((pred.unsqueeze(-1), multi_steps_pred), dim=2)
+            multisteps_loss = loss_fn(pred[dst_idx, :, :], g.ndata['label'][dst_idx, :, :])
+            multi_steps_train_loss.append(multisteps_loss.item())
+
+            print('Train Prediction: {}'.format(pred[dst_idx,:, 0]))
             print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Train Loss: {}'.format(loss.item()))
+            print('Train Multi-Steps Loss: {}'.format(multisteps_loss.item()))
+
+            # print("Probabilities: {}".format(model.g.ndata['alpha'][[0,3],...]))
+
             print('*************')
 
         for i, (x, y) in enumerate(test_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
-
+            # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
+            # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
             pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
-            loss = loss_fn(pred[dst_idx, :, 0], g.ndata['label'][dst_idx, :, 0])
-
+            loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             test_loss.append(loss.item())
 
-            print('Test Prediction: {}'.format(pred[dst_idx]))
+
+            # multi_steps_pred = torch.cat((pred.unsqueeze(-1), multi_steps_pred), dim=2)
+            multisteps_loss = loss_fn(pred[dst_idx, :, :], g.ndata['label'][dst_idx, :, :])
+            multi_steps_test_loss.append(multisteps_loss.item())
+
+            print('Test Prediction: {}'.format(pred[dst_idx, :, 0]))
             print('Test Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Test Loss: {}'.format(loss.item()))
+            print('Test Multi-Steps Loss: {}'.format(multisteps_loss.item()))
+
             print('*************')
 
+        # print('Training Time: {}'.format(total_time))
         print('Total Train Loss: {}'.format(np.mean(train_loss)))
+        print('Multi-Steps Train Loss: {}'.format(np.mean(multi_steps_train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
+        print('Multi-Steps Test Loss: {}'.format(np.mean(multi_steps_test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))  # 1025

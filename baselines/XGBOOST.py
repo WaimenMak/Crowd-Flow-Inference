@@ -13,6 +13,7 @@ if __name__ == '__main__':
     import numpy as np
     import random
     import time
+    import torch
 
     random.seed(1)
     df_dict = {}
@@ -24,12 +25,12 @@ if __name__ == '__main__':
 
     data_dict = gen_data_dict(df_dict)
 
-    # dataset_name = "crossroad"
-    dataset_name = "train_station"
-    train_sc = ['../sc_sensor/train6']
-    test_sc = ['../sc_sensor/train7']
-    # train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
-    # test_sc = ['../sc_sensor/crossroad3']
+    dataset_name = "crossroad"
+    # dataset_name = "train_station"
+    # train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
+    # test_sc = ['../sc_sensor/train5']
+    train_sc = ['../sc_sensor/crossroad3']
+    test_sc = ['../sc_sensor/crossroad3']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -37,12 +38,13 @@ if __name__ == '__main__':
 
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
-
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=5,
-    #                                                                              portion=0.5,
-    #                                                                              shuffle=False)
+    pred_horizon = 2 # 3, 5
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+                                                                                 lags=5,
+                                                                                 horizons=pred_horizon,
+                                                                                 portion=0.03,
+                                                                                 shuffle=True)
 
     if dataset_name == "crossroad":
         src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
@@ -102,11 +104,11 @@ if __name__ == '__main__':
 
     #normalization
 
-    # Define the XGBoost model
+    '''Define the XGBoost model'''
     model = xgb.XGBRegressor(objective='reg:squarederror')
     # params_xgb = {"early_stopping_rounds":10, "eval_metric":"rmse", "tree_method":"gpu_hist"}
-    params_xgb = {"early_stopping_rounds":5, "eval_metric":"rmse"}
-    # Fit the model to the training data
+    params_xgb = {"early_stopping_rounds":10, "eval_metric":"rmse"}
+    '''Fit the model to the training data'''
     model.set_params(**params_xgb)
     start_time = time.time()
     eval_set = [(x_val, y_val)]
@@ -114,20 +116,36 @@ if __name__ == '__main__':
     end_time = time.time()
     total_train_time = end_time - start_time
 
-    # predict
+    '''predict, [num_samples, num_nodes]'''
     y_pred = model.predict(x_test)
-    y_train = model.predict(x_train)
-    #get the prediction MSE
-    test_loss = np.mean((y_pred[..., dst_idx] - y_test[..., dst_idx])**2)
-    train_loss = np.mean((y_train[..., dst_idx] - y_train[..., dst_idx])**2)
+    y_pred_train = model.predict(x_train)
+
+    y_pred = y_pred.reshape([-1, pred_horizon, num_nodes]).transpose([2, 0, 1])
+    y_pred_train = y_pred_train.reshape([-1, pred_horizon, num_nodes]).transpose([2, 0, 1])
+    y_test = y_test.reshape([-1, pred_horizon, num_nodes]).transpose([2, 0, 1])
+    y_train = y_train.reshape([-1, pred_horizon, num_nodes]).transpose([2, 0, 1])
+    '''get the prediction MSE'''
+    # loss_fn = torch.nn.MSELoss(reduction='mean')
+    # test_loss = loss_fn(torch.FloatTensor(y_pred)[dst_idx, :, :], torch.FloatTensor(y_test)[dst_idx, :, :]).item()
+    # test_loss = loss_fn(torch.FloatTensor(y_pred)[:, dst_idx], torch.FloatTensor(y_test)[:, dst_idx]).item()
+    # test_loss = np.mean((y_pred[:, dst_idx] - y_test[:, dst_idx])**2)
+    # train_loss = np.mean((y_pred_train[:, dst_idx] - y_train[:, dst_idx])**2)
+
+    test_loss = np.mean((y_pred[dst_idx, :, 0] - y_test[dst_idx, :, 0])**2)
+    train_loss = np.mean((y_pred_train[dst_idx, :, 0] - y_train[dst_idx, :, 0])**2)
+    multi_steps_test_loss = np.mean((y_pred[dst_idx, :, :] - y_test[dst_idx, :, :])**2)
+    multi_steps_train_loss = np.mean((y_pred_train[dst_idx, :, :] - y_train[dst_idx, :, :])**2)
     print('*************')
     print('Total Train Time: {}'.format(total_train_time))
+    print('Total Train Loss: {}'.format(train_loss))
+    print('Multi-Step Train Loss: {}'.format(multi_steps_train_loss))
     print('Total Test Loss: {}'.format(test_loss))
+    print('Multi-Step Test Loss: {}'.format(multi_steps_test_loss))
 
-    # save the model
-    if dataset_name == "crossroad":
-        model.save_model('../checkpoint/xgboost/xgboost_cross.model')
-    if dataset_name == "train_station":
-        model.save_model('../checkpoint/xgboost/xgboost_train_station.model')
+    '''save the model'''
+    # if dataset_name == "crossroad":
+    #     model.save_model('../checkpoint/xgboost/xgboost_cross.model')
+    # if dataset_name == "train_station":
+    #     model.save_model('../checkpoint/xgboost/xgboost_train_station.model')
 
 
