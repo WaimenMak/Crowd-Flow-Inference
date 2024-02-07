@@ -170,6 +170,7 @@ class Diffusion_Model(torch.nn.Module):
     def edge_diffusion(self, edges):
         total_time_steps = self.num_timesteps_input
         F = 1/(1 + edges.data['alpha'] * edges.data['T']) # [num edges, batch_size]
+        # for loop
         edges_padded_sequences = []
         for e in range(self.num_edges):  # can be optimized by parallel computing
             sequences = []
@@ -184,8 +185,19 @@ class Diffusion_Model(torch.nn.Module):
                 padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
 
             edges_padded_sequences.append(padded_sequences)
+        edges_padded_sequences = torch.stack(edges_padded_sequences, dim=0)
 
-        return {'diffusion': torch.stack(edges_padded_sequences, dim=0), "F": F}
+        # map function
+        # n = self.num_timesteps_input - edges.data['T_idx']
+        # sequences = list(map(self.diffusion_sequence, F.reshape([-1, ]), n.reshape([-1, ])))
+        #
+        # padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
+        # if padded_sequences.shape[1] < self.num_timesteps_input:
+        #     pad_zero = torch.zeros(padded_sequences.shape[0], self.num_timesteps_input - padded_sequences.shape[1])
+        #     padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
+        # edges_padded_sequences = padded_sequences.reshape(self.num_edges, F.shape[1], self.num_timesteps_input)
+
+        return {'diffusion': edges_padded_sequences, "F": F}
 
     def message_func(self, edges):
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
@@ -312,13 +324,13 @@ if __name__ == '__main__': #network 3
     data_dict = gen_data_dict(df_dict)
 
     # out of distribution
-    dataset_name = "crossroad"
-    # dataset_name = "train_station"
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
     # train_sc = ['sc_sensor/crossroad2', 'sc_sensor/crossroad4', 'sc_sensor/crossroad5']
-    train_sc = ['sc_sensor/crossroad3']
-    test_sc = ['sc_sensor/crossroad3']
-    # train_sc = ['sc_sensor/train6']
-    # test_sc = ['sc_sensor/train2']
+    # train_sc = ['sc_sensor/crossroad3']
+    # test_sc = ['sc_sensor/crossroad3']
+    train_sc = ['sc_sensor/train1']
+    # test_sc = ['sc_sensor/train5']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -331,7 +343,7 @@ if __name__ == '__main__': #network 3
     x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
                                                                                  lags=5,
                                                                                  horizons=pred_horizon,
-                                                                                 portion=0.01,
+                                                                                 portion=0.7,
                                                                                  shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
@@ -423,7 +435,7 @@ if __name__ == '__main__': #network 3
     dst_idx = dst.unique()
 
     # train
-    for epoch in range(800):
+    for epoch in range(500):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
 
@@ -441,7 +453,7 @@ if __name__ == '__main__': #network 3
             # update transition probability
             if epoch % 2 == 0:
                 '''single step'''
-                if pred_horizon == 2:
+                if pred_horizon - 1 == 1:
                     pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
                     loss2 = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0])
                 else:

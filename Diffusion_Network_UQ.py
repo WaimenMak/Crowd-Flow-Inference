@@ -76,7 +76,7 @@ class Velocity_Model_NAM(nn.Module):
         out = torch.log(1 + torch.exp(out))
         out = out.squeeze(2).transpose(1, 0) # [batch_size, num of edges]
 
-        return out
+        return out.clamp(max=3)
 
     # def inference(self, upstream, downstream):
     #     with torch.no_grad():
@@ -189,22 +189,33 @@ class Diffusion_Model_UQ(torch.nn.Module):
 
     def edge_diffusion(self, edges):
         total_time_steps = self.num_timesteps_input
-        F = 1/(1 + edges.data['alpha'] * edges.data['T']) # [num edges, batch_size]
-        edges_padded_sequences = []
-        for e in range(self.num_edges):
-            sequences = []
-            for i in range(F.size(1)): # batch_size
-                F_sequence = self.diffusion_sequence(F[e, i], total_time_steps - edges.data['T_idx'][e, i]) #[1: num_timesteps_input]
-                sequences.append(F_sequence)
+        F = 1/(1 + edges.data['alpha'].clamp(min=0, max=1) * edges.data['T']) # [num edges, batch_size]
+        # F = 1/(1 + edges.data['alpha'] * edges.data['T']) # [num edges, batch_size]
+        # edges_padded_sequences = []
+        # for e in range(self.num_edges):
+        #     sequences = []
+        #     for i in range(F.size(1)): # batch_size
+        #         F_sequence = self.diffusion_sequence(F[e, i], total_time_steps - edges.data['T_idx'][e, i]) #[1: num_timesteps_input]
+        #         sequences.append(F_sequence)
+        #
+        #     padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0) # [batch_size, num_timesteps_input]
+        #     if padded_sequences.shape[1] < total_time_steps:
+        #         pad_zero = torch.zeros(F.size(1), total_time_steps - padded_sequences.shape[1]).to(self.device)
+        #         padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
+        #
+        #     edges_padded_sequences.append(padded_sequences)
 
-            padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0) # [batch_size, num_timesteps_input]
-            if padded_sequences.shape[1] < total_time_steps:
-                pad_zero = torch.zeros(F.size(1), total_time_steps - padded_sequences.shape[1]).to(self.device)
-                padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
+        # return {'diffusion': torch.stack(edges_padded_sequences, dim=0), "F": F}
+        n = total_time_steps - edges.data['T_idx']
+        sequences = list(map(self.diffusion_sequence, F.reshape([-1, ]), n.reshape([-1, ])))
 
-            edges_padded_sequences.append(padded_sequences)
+        padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
+        if padded_sequences.shape[1] < total_time_steps:
+            pad_zero = torch.zeros(padded_sequences.shape[0], total_time_steps - padded_sequences.shape[1])
+            padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
+        edges_padded_sequences = padded_sequences.reshape(self.num_edges, F.shape[1], total_time_steps)
 
-        return {'diffusion': torch.stack(edges_padded_sequences, dim=0), "F": F}
+        return {'diffusion': edges_padded_sequences, "F": F}
 
     def message_func(self, edges):
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
@@ -263,14 +274,34 @@ class Diffusion_Model_UQ(torch.nn.Module):
 
         return self.g.ndata.pop('pred') # [num_edges, batch_size]
 
+    # def inference(self, upstream_flows, downstream_flows):
+    #     # with torch.no_grad():
+    #     #     upstream_flows = self.scalar.transform(upstream_flows)
+    #     #     downstream_flows = self.scalar.transform(downstream_flows)
+    #     pred = self.forward(upstream_flows, downstream_flows)
+    #     self.g.update_all(self.multi_steps_prediction, self.reduce_multisteps)
+    #     multi_steps_pred = torch.concat((pred.unsqueeze(-1), self.g.ndata['multi_steps_pred']), dim=2)
+    #     return pred, multi_steps_pred # [num_edges, batch_size]
     def inference(self, upstream_flows, downstream_flows):
         # with torch.no_grad():
         #     upstream_flows = self.scalar.transform(upstream_flows)
         #     downstream_flows = self.scalar.transform(downstream_flows)
+        # with torch.no_grad():
         pred = self.forward(upstream_flows, downstream_flows)
+        # pred = pred.clamp(min=0)
         self.g.update_all(self.multi_steps_prediction, self.reduce_multisteps)
         multi_steps_pred = torch.concat((pred.unsqueeze(-1), self.g.ndata['multi_steps_pred']), dim=2)
+
         return pred, multi_steps_pred # [num_edges, batch_size]
+
+    def pad_src_data(self, data):
+        pred = []
+        pred.append(torch.mean(data[...,-4:], dim=-1))
+        data = torch.cat([data, pred[0].unsqueeze(-1)], dim=-1)
+        for i in range(1, 5):
+            pred.append(torch.mean(data[..., -4+i:], dim=-1))
+            data = torch.cat([data, pred[i].unsqueeze(-1)], dim=-1)
+        return data
 
     def multi_steps_prediction(self, edges):
         self.g.apply_edges(self.message_func) # pred up 2 down
@@ -279,6 +310,7 @@ class Diffusion_Model_UQ(torch.nn.Module):
         F = edges.data['F']
         P = edges.data['e']
         future_data = edges.src['feature'].view(-1, self.num_timesteps_input)
+        future_data = self.pad_src_data(future_data)
         bc = edges.src['feature'].shape[1]
 
         T_idx = self.num_timesteps_input - edges.data['T_idx'].long() # T_idx: T_ab + 1
@@ -326,8 +358,8 @@ if __name__ == '__main__': #network 3
     # out of distribution
     dataset_name = "crossroad"
     # dataset_name = "train_station"
-    train_sc = ['sc_sensor/crossroad3']
-    # test_sc = ['sc_sensor/crossroad3']
+    train_sc = ['sc_sensor/crossroad3', 'sc_sensor/crossroad8', 'sc_sensor/crossroad2', 'sc_sensor/crossroad5']
+    test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
     # train_sc = ['sc_sensor/train6', 'sc_sensor/train7', 'sc_sensor/train2']
     # test_sc = ['sc_sensor/train7']
     # for sc in data_dict.keys():
@@ -337,13 +369,13 @@ if __name__ == '__main__': #network 3
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
 
-    pred_horizon = 2 # 3, 5
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 horizons=pred_horizon,
-                                                                                 portion=0.03,
-                                                                                 shuffle=True)
+    pred_horizon = 5 # 3, 5
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              horizons=pred_horizon,
+    #                                                                              portion=0.03,
+    #                                                                              shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -437,7 +469,7 @@ if __name__ == '__main__': #network 3
     dst_idx = dst.unique()
 
     # train
-    for epoch in range(2000):
+    for epoch in range(500):
         l = []
         mse = []
         for i, (x, y) in enumerate(train_dataloader):
@@ -468,7 +500,7 @@ if __name__ == '__main__': #network 3
                 '''single step'''
                 nll_loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], alpha[dst_idx]) # negative binomial loss
                 '''multi steps'''
-                if pred_horizon > 2:
+                if pred_horizon - 1 > 1:
                     _, multi_steps_pred = model.inference(g.ndata['feature'][src], g.ndata['feature'][dst])
                     mse_loss = loss_fn_mse(multi_steps_pred[dst_idx, :, 1:], g.ndata['label'][dst_idx,:, 1:])
                     nll_loss = nll_loss + mse_loss
@@ -483,16 +515,12 @@ if __name__ == '__main__': #network 3
 
         if epoch % 100 == 0:
             print('Epoch: {}, Loss: {}, MSE: {}'.format(epoch, np.mean(l), np.mean(mse)))
-            # if dataset_name == "crossroad":
-            #     torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq_cross.pth')
-            # if dataset_name == "train_station":
-            #     torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq.pth')
 
     total_time = time.time() - start
     if dataset_name == "crossroad":
-        torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq_cross.pth')
+        torch.save(model.state_dict(), './checkpoint/diffusion/offline_diffusion_uq_cross.pth')
     if dataset_name == "train_station":
-        torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_uq.pth')
+        torch.save(model.state_dict(), './checkpoint/diffusion/offline_diffusion_uq_train.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])

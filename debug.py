@@ -100,35 +100,68 @@ def load_cora_data():
     # Return the graph, features, labels, and mask
     return g, features, labels, mask
 
-g, features, labels, mask = load_cora_data()
+# g, features, labels, mask = load_cora_data()
+#
+# # 创建模型
+# net = GAT(g,
+#           in_dim=features.size()[1],
+#           hidden_dim=8,
+#           out_dim=7,
+#           num_heads=8)
+# print(net)
+#
+# # 创建优化器
+# optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+#
+# # 主流程
+# dur = []
+# for epoch in range(30):
+#     if epoch >=3:
+#         t0 = time.time()
+#
+#     logits = net(features)
+#     logp = F.log_softmax(logits, 1)
+#     loss = F.nll_loss(logp[mask], labels[mask])
+#
+#     optimizer.zero_grad()
+#     loss.backward()
+#     optimizer.step()
+#
+#     if epoch >=3:
+#         dur.append(time.time() - t0)
+#
+#     print("Epoch {:05d} | Loss {:.4f} | Time(s) {:.4f}".format(
+#             epoch, loss.item(), np.mean(dur)))
 
-# 创建模型
-net = GAT(g,
-          in_dim=features.size()[1],
-          hidden_dim=8,
-          out_dim=7,
-          num_heads=8)
-print(net)
 
-# 创建优化器
-optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+def diffusion_sequence(F, n):
+    indices = torch.arange(n.item()-1, -1, -1)
+    result = F * torch.pow(1 - F, indices)
+    # bias correction
+    # result = result/(1 - torch.pow(1 - F, n.item())).detach()
+    return result
+if __name__ == '__main__':
+    import torch
+    from torch.nn.utils.rnn import pad_sequence
+    from multiprocessing import Pool
+    # def diffusion_sequence(F, n):
+    #     indices = torch.arange(n.item()-1, -1, -1)
+    #     result = F * torch.pow(1 - F, indices)
+    #     # bias correction
+    #     # result = result/(1 - torch.pow(1 - F, n.item())).detach()
+    #     return result
+    total_time_steps = 6
+    T = torch.tensor([[0.1, 0.2, 0.3, 0.4, 0.5], [0.1, 0.2, 0.3, 0.4, 0.5]])  # shape (bc, num edges)
+    alpha = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5]) # shape (num edges)
+    F = 1/(1 + alpha * T)   # shape (bc, num edges)
+    # f = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5])
+    n = torch.tensor([[1, 2, 3, 4, 5],[1, 2, 3, 4, 5]])
+    with Pool() as p:
+        sequences = p.starmap(diffusion_sequence, zip(F.reshape([-1, ]), n.reshape([-1, ])))
 
-# 主流程
-dur = []
-for epoch in range(30):
-    if epoch >=3:
-        t0 = time.time()
-
-    logits = net(features)
-    logp = F.log_softmax(logits, 1)
-    loss = F.nll_loss(logp[mask], labels[mask])
-
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    if epoch >=3:
-        dur.append(time.time() - t0)
-
-    print("Epoch {:05d} | Loss {:.4f} | Time(s) {:.4f}".format(
-            epoch, loss.item(), np.mean(dur)))
+    p.close()
+    padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
+    if padded_sequences.shape[1] < total_time_steps:
+        pad_zero = torch.zeros(padded_sequences.shape[0], total_time_steps - padded_sequences.shape[1])
+        padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
+    print(padded_sequences.reshape([T.shape[0], T.shape[1], total_time_steps]))

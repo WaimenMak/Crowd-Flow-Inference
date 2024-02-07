@@ -6,6 +6,7 @@
 import random
 from torch.utils.data import Dataset, DataLoader
 import torch
+from collections import deque
 class FlowDataset(Dataset):
     def __init__(self, xs, ys, batch_size):
         self.x_data = torch.tensor(xs, dtype=torch.float32)
@@ -19,6 +20,33 @@ class FlowDataset(Dataset):
 
     def __len__(self):
         return len(self.x_data)
+
+class replay_buffer():
+    def __init__(self, capacity):
+        self.buffer = deque()
+        self.capacity = capacity
+        self.count = 0
+
+    def add(self, observation, label):  # done: whether the final state, TD error would be different.
+        experience = (observation, label)
+        if self.count < self.capacity:
+            self.buffer.append(experience)
+            self.count += 1
+        else:
+            self.buffer.popleft()
+            self.buffer.append(experience)
+
+    def sample(self, batch_size):  # return a tuple
+        batch = random.sample(self.buffer, batch_size)  # a list [(s,a,r,s), ...]
+        return zip(*batch)
+
+    def clear(self):
+        self.buffer.clear()
+        self.count = 0
+
+    def __len__(self):
+        # return len(self.buffer)
+        return self.count
 
 if __name__ == '__main__':
     from lib.utils import gen_data_dict, process_sensor_data, generate_insample_dataset

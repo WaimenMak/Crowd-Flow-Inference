@@ -8,15 +8,16 @@ import numpy as np
 import time
 import torch
 class Moving_Average():
-    def __init__(self, horizons=2):
+    def __init__(self, horizons=0):
         self.horizons = horizons
     def inference(self, data):
         pred = []
         pred.append(torch.mean(data, dim=-1))
         data = torch.cat([data, pred[0].unsqueeze(-1)], dim=-1)
-        for i in range(1, self.horizons-1):
+        for i in range(1, self.horizons):
+            # pred.append(torch.mean(data[..., i:], dim=-1))
             pred.append(torch.mean(data, dim=-1))
-            data = torch.cat([data, pred[i].unsqueeze(-1)], dim=-1)
+            data = torch.cat([data, pred[-1].unsqueeze(-1)], dim=-1)
         return torch.stack(pred, dim=-1) # [num_nodes, batch_size]
 
 
@@ -40,10 +41,10 @@ if __name__ == '__main__':
 
     # dataset_name = "crossroad"
     dataset_name = "train_station"
-    train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
-    test_sc = ['../sc_sensor/train5']
-    # train_sc = ['../sc_sensor/crossroad2']
-    # test_sc = ['../sc_sensor/crossroad3']
+    # train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
+    # test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
+    train_sc = ['../sc_sensor/train1']
+    test_sc = ['../sc_sensor/train2']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -55,7 +56,7 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    pred_horizon = 3 # 3, 5
+    pred_horizon = 5 # 3, 5
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=5,
@@ -122,7 +123,7 @@ if __name__ == '__main__':
     # g.edata['distance'] = torch.FloatTensor([50, 50]) # 50m
 
     # train
-    model = Moving_Average(horizons=pred_horizon)
+    model = Moving_Average(horizons=pred_horizon-1)
 
     start = time.time()
     src, dst = g.edges()

@@ -19,7 +19,7 @@ class GCN(nn.Module):
         self.layers.append(
             dglnn.GraphConv(in_size, hid_size, activation=F.relu)
         )
-        self.layers.append(dglnn.GraphConv(hid_size, hid_size, activation=F.relu))
+        # self.layers.append(dglnn.GraphConv(hid_size, hid_size, activation=F.relu))
         # self.layers.append(dglnn.GraphConv(hid_size, hid_size, activation=F.relu))
         self.layers.append(dglnn.GraphConv(hid_size, out_size))
         # self.ln = nn.LayerNorm(out_size)
@@ -64,8 +64,10 @@ if __name__ == '__main__':
 
     # dataset_name = "crossroad"
     dataset_name = "train_station"
-    train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
-    # test_sc = ['../sc_sensor/train5']
+    # train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
+    # test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
+    train_sc = ['../sc_sensor/train1']
+    test_sc = ['../sc_sensor/train2']
     # train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
     # test_sc = ['../sc_sensor/crossroad3']
     # for sc in data_dict.keys():
@@ -79,13 +81,13 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    pred_horizon = 3 # 3, 5
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, shuffle=True)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 horizons=pred_horizon,
-                                                                                 portion=0.6,
-                                                                                 shuffle=True)
+    pred_horizon = 5 # 3, 5
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              horizons=pred_horizon,
+    #                                                                              portion=0.6,
+    #                                                                              shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -155,8 +157,8 @@ if __name__ == '__main__':
                                                  32,32,49,49,35])
 
     # train
-    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=pred_horizon - 1, scalar=x_scalar)  # out_size: prediction horizon
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=pred_horizon-1, scalar=x_scalar)  # out_size: prediction horizon
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
     src, dst = g.edges()
@@ -164,7 +166,7 @@ if __name__ == '__main__':
     dst_idx = dst.unique()
     g = dgl.add_self_loop(g)
     # train
-    for epoch in range(800):
+    for epoch in range(3000):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
@@ -180,6 +182,11 @@ if __name__ == '__main__':
             # early stopping
         if epoch % 100 == 0:
             print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
+
+    if dataset_name == "crossroad":
+        torch.save(model.state_dict(), '../checkpoint/gcn/gcn_crossroad.pth')
+    if dataset_name == "train_station":
+        torch.save(model.state_dict(), '../checkpoint/gcn/gcn_trainstation.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])

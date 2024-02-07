@@ -27,10 +27,10 @@ if __name__ == '__main__':
 
     dataset_name = "crossroad"
     # dataset_name = "train_station"
-    # train_sc = ['../sc_sensor/train6', '../sc_sensor/train7', '../sc_sensor/train2']
-    # test_sc = ['../sc_sensor/train5']
-    train_sc = ['../sc_sensor/crossroad3']
-    test_sc = ['../sc_sensor/crossroad3']
+    train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
+    test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
+    # train_sc = ['../sc_sensor/train3']
+    # test_sc = ['../sc_sensor/train2']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -38,13 +38,13 @@ if __name__ == '__main__':
 
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
-    pred_horizon = 2 # 3, 5
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-                                                                                 lags=5,
-                                                                                 horizons=pred_horizon,
-                                                                                 portion=0.03,
-                                                                                 shuffle=True)
+    pred_horizon = 5 # 3, 5
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+    #                                                                              lags=5,
+    #                                                                              horizons=pred_horizon,
+    #                                                                              portion=0.03,
+    #                                                                              shuffle=True)
 
     if dataset_name == "crossroad":
         src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     # params_xgb = {"early_stopping_rounds":10, "eval_metric":"rmse", "tree_method":"gpu_hist"}
     params_xgb = {"early_stopping_rounds":10, "eval_metric":"rmse"}
     '''Fit the model to the training data'''
-    model.set_params(**params_xgb)
+    # model.set_params(**params_xgb)
     start_time = time.time()
     eval_set = [(x_val, y_val)]
     model.fit(x_train, y_train, eval_set=eval_set, verbose=True)   # annotate for testing
@@ -143,9 +143,9 @@ if __name__ == '__main__':
     print('Multi-Step Test Loss: {}'.format(multi_steps_test_loss))
 
     '''save the model'''
-    # if dataset_name == "crossroad":
-    #     model.save_model('../checkpoint/xgboost/xgboost_cross.model')
-    # if dataset_name == "train_station":
-    #     model.save_model('../checkpoint/xgboost/xgboost_train_station.model')
+    if dataset_name == "crossroad":
+        model.save_model('../checkpoint/xgboost/offline_xgboost_cross.model')
+    if dataset_name == "train_station":
+        model.save_model('../checkpoint/xgboost/offline_xgboost_train_station.model')
 
 

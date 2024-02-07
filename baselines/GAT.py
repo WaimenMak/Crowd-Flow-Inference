@@ -151,8 +151,8 @@ if __name__ == '__main__':
     # out of distribution
     # dataset_name = "crossroad"
     dataset_name = "train_station"
-    train_sc = ['../sc_sensor/train6']
-    test_sc = ['../sc_sensor/train7']
+    train_sc = ['../sc_sensor/train1']
+    test_sc = ['../sc_sensor/train2']
     # train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad9', '../sc_sensor/crossroad10', '../sc_sensor/crossroad11']
     # test_sc = ['../sc_sensor/crossroad3']
 
@@ -163,11 +163,13 @@ if __name__ == '__main__':
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, shuffle=True)
+    pred_horizon = 5 # 3, 5
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=5,
-    #                                                                              portion=0.5,
-    #                                                                              shuffle=False)
+    #                                                                              horizons=pred_horizon,
+    #                                                                              portion=0.6,
+    #                                                                              shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -245,7 +247,7 @@ if __name__ == '__main__':
     adj_mat = g.adjacency_matrix(transpose=False, scipy_fmt="coo")
 
     # train
-    model = GAT(g=adj_mat, seq_len=6, feature_size=1, hidden_dim=32, out_dim=1, nodes=num_nodes, num_heads=3)  # out_size: prediction horizon
+    model = GAT(g=adj_mat, seq_len=num_input_timesteps, feature_size=1, hidden_dim=32, out_dim=pred_horizon-1, nodes=num_nodes, num_heads=3)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
@@ -259,7 +261,7 @@ if __name__ == '__main__':
             y = y.permute(2, 0, 1)
             pred = model(x.permute(0, 2, 1)) # inpt : [batch_size, node, num_timesteps_input]
             # loss = loss_fn(pred, y[:, 0, :])
-            loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0]) # [num_dst, batch_size], one-step prediction
+            loss = loss_fn(pred[dst_idx, :, :], y[dst_idx, :, :]) # [num_dst, batch_size], one-step prediction
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -268,13 +270,20 @@ if __name__ == '__main__':
         if epoch % 100 == 0:
             print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
 
+    if dataset_name == "crossroad":
+        torch.save(model.state_dict(), '../checkpoint/gat/gat_crossroad.pth')
+    if dataset_name == "train_station":
+        torch.save(model.state_dict(), '../checkpoint/gat/gat_trainstation.pth')
+
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
     test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
 
-
     test_loss = []
     train_loss = []
+    multi_steps_train_loss = []
+    multi_steps_test_loss = []
+    model.eval()
     model.eval()
     with torch.no_grad():
         for i, (x, y) in enumerate(train_dataloader):
@@ -283,9 +292,15 @@ if __name__ == '__main__':
             # loss = loss_fn(pred, y[:, 0, :])
             loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0])
             train_loss.append(loss.item())
-            print('Train Prediction: {}'.format(pred[dst_idx]))
-            print('Train Ground Truth: {}'.format(y[dst_idx,:, 0]))
+
+            # multi_steps_pred = torch.cat((pred.unsqueeze(-1), multi_steps_pred), dim=2)
+            multisteps_loss = loss_fn(pred[dst_idx, :, :], y[dst_idx, :, :])
+            multi_steps_train_loss.append(multisteps_loss.item())
+
             print('Train Loss: {}'.format(loss.item()))
+            print('Train Multi-Steps Loss: {}'.format(multisteps_loss.item()))
+            # print('Train Prediction: {}'.format(pred[dst_idx]))
+            # print('Train Ground Truth: {}'.format(y[dst_idx,:, 0]))
             print('*************')
 
         for i, (x, y) in enumerate(test_dataloader):
@@ -295,13 +310,12 @@ if __name__ == '__main__':
             loss = loss_fn(pred[dst_idx, :, 0], y[dst_idx, :, 0])
 
             test_loss.append(loss.item())
-
-            print('Test Prediction: {}'.format(pred[dst_idx]))
-            print('Test Ground Truth: {}'.format(y[dst_idx,:, 0]))
-            print('Test Loss: {}'.format(loss.item()))
-            print('*************')
+            multisteps_loss = loss_fn(pred[dst_idx, :, :], y[dst_idx, :, :])
+            multi_steps_test_loss.append(multisteps_loss.item())
 
         print('Total Train Loss: {}'.format(np.mean(train_loss)))
+        print('Multi-Steps Train Loss: {}'.format(np.mean(multi_steps_train_loss)))
         print('Total Test Loss: {}'.format(np.mean(test_loss)))
+        print('Multi-Steps Test Loss: {}'.format(np.mean(multi_steps_test_loss)))
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model)))
