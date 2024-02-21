@@ -206,12 +206,13 @@ class Online_Diffusion_Density(Base_Learner):
 class Online_Diffusion(Base_Learner):
     def __init__(self, pred_horizon, lags, g, device, train_steps, chunk_size, buffer):
         super().__init__(pred_horizon, lags, g, device, train_steps, buffer)
-        self.model = Diffusion_Model(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None)
+        self.model = Diffusion_Model(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None, device=device)
         # self.model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network3_cross.pth"))
         self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
                                                        {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
+        # self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5}])
+        # self.opt_alpha = torch.optim.Adam([{'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
         self.prop_opt = torch.optim.Adam(self.model.transition_probability.parameters(), lr=0.001, weight_decay=1e-5)
-        # self.optimizer = torch.optim.Adam([self.model.alpha], lr=0.001, weight_decay=1e-5)
         # self.prop_opt = torch.optim.Adam([
         #     {'params': self.model.transition_probability.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
         #     {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}
@@ -298,7 +299,7 @@ class Online_Diffusion(Base_Learner):
 class Online_Diffusion_UQ(Base_Learner):
     def __init__(self, pred_horizon, lags, g, device, train_steps, buffer, chunk_size):
         super().__init__(pred_horizon, lags, g, device, train_steps, buffer)
-        self.model = Diffusion_Model_UQ(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None)
+        self.model = Diffusion_Model_UQ(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None, device=device)
         self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
                                                        {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
         self.prop_opt = torch.optim.Adam(self.model.transition_probability.parameters(), lr=0.001, weight_decay=1e-5)
