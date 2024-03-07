@@ -244,6 +244,11 @@ class EarlyStopper:
         self.min_delta = min_delta
         self.last_val_loss = np.inf
 
+    def reset(self):
+        self.counter = 0
+        self.min_validation_loss = np.inf
+        self.last_val_loss = np.inf
+
     def early_stop(self, val_loss):
         if val_loss < self.min_validation_loss:
             self.min_validation_loss = val_loss

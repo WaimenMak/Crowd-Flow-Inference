@@ -23,7 +23,12 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 
 conda activate diffusion
 cd ${HOME}/Devs/Crowd\-Flow\-Inference
+# pip install  dgl -f https://data.dgl.ai/wheels/cu117/repo.html
+# pip install  dglgo -f https://data.dgl.ai/wheels-test/repo.html
+# pip install openpyxl
+# pip install xgboost
 #python main.py --mode ood --file dcrnn
-python Online_Update.py
-
+python Online_Update.py --model_type="Online_Diffusion_UQ" --lags=5 --chunk_size=10 --pred_horizons=5 --train_steps=130
+echo "####### Job1 finished #######"
+python Online_Update.py --model_type="Online_Diffusion" --lags=5 --chunk_size=10 --pred_horizons=5 --train_steps=130
 #export conda_env=${HOME}/anaconda3/envs/frl

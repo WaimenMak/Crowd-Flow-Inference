@@ -25,12 +25,12 @@ if __name__ == '__main__':
 
     data_dict = gen_data_dict(df_dict)
 
-    dataset_name = "crossroad"
-    # dataset_name = "train_station"
-    train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
-    test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
-    # train_sc = ['../sc_sensor/train3']
-    # test_sc = ['../sc_sensor/train2']
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
+    # train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
+    # test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
+    train_sc = ['../sc_sensor/train1']
+    test_sc = ['../sc_sensor/train2']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:

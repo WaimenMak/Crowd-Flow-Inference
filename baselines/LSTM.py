@@ -31,7 +31,7 @@ if __name__ == '__main__':
     import random
     import time
     import torch
-    import pickle
+    from dgl.data.utils import load_graphs
 
     random.seed(1)
     df_dict = {}
@@ -45,10 +45,12 @@ if __name__ == '__main__':
 
     dataset_name = "crossroad"
     # dataset_name = "train_station"
-    train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
-    test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
-    # train_sc = ['../sc_sensor/crossroad3']
-    # test_sc = ['../sc_sensor/crossroad11']
+
+    train_sc = ['../sc_sensor/crossroad2', '../sc_sensor/crossroad1', '../sc_sensor/crossroad6', '../sc_sensor/crossroad7', '../sc_sensor/crossroad8']
+    # train_sc = ['../sc_sensor/crossroad2']
+    test_sc = ['../sc_sensor/crossroad3']
+    # train_sc = ['../sc_sensor/train1']
+    # test_sc = ['../sc_sensor/train2']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -64,15 +66,11 @@ if __name__ == '__main__':
     #                                                                              portion=0.03,
     #                                                                              shuffle=True)
 
+    g_data = load_graphs('../graphs/graphs.bin')
     if dataset_name == "crossroad":
-        file_path = '../graphs/graph_data_crossroad.pkl'
-        with open(file_path, 'rb') as file:
-            g = pickle.load(file)
-
+        g = g_data[0][0]
     elif dataset_name == "train_station":
-        file_path = '../graphs/graph_data_trainstation.pkl'
-        with open(file_path, 'rb') as file:
-            g = pickle.load(file)
+        g = g_data[0][1]
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -96,7 +94,7 @@ if __name__ == '__main__':
     dst_idx = dst.unique()
     g = dgl.add_self_loop(g)
 
-    for epoch in range(800):
+    for epoch in range(250):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             # x = x.permute(1, 2, 0)

@@ -128,7 +128,7 @@ class Probabilistic_Model(torch.nn.Module):
 
 
 class Diffusion_Model(torch.nn.Module):
-    def __init__(self, num_edges, num_timesteps_input, graph, horizons, scalar, time_units=10):
+    def __init__(self, num_edges, num_timesteps_input, graph, horizons, scalar, device, time_units=10):
         """
 
         :param num_nodes: number of ancestor nodes
@@ -146,7 +146,7 @@ class Diffusion_Model(torch.nn.Module):
         self.num_edges = num_edges
         self.horizons = horizons
         self.time_units = time_units
-        self.alpha = nn.Parameter(torch.ones(self.num_edges, 1), requires_grad=True)
+        self.alpha = nn.Parameter(torch.ones(self.num_edges, 1).to(device), requires_grad=True)
         # self.alpha = nn.Parameter(0.5 * torch.ones(self.num_edges, 1), requires_grad=True)
 
         self.g = graph
@@ -179,11 +179,11 @@ class Diffusion_Model(torch.nn.Module):
         F = 1/(1 + edges.data['alpha'].clamp(min=0, max=1) * edges.data['T']) # [num edges, batch_size]
 
         n = total_time_steps - edges.data['T_idx']
-        sequences = list(map(self.diffusion_sequence, F.reshape([-1, ]), n.reshape([-1, ])))
+        sequences = list(map(self.diffusion_sequence, F.reshape([-1, ]).to('cpu'), n.reshape([-1, ]).to('cpu')))
 
-        padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
+        padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0).to(self.device)
         if padded_sequences.shape[1] < total_time_steps:
-            pad_zero = torch.zeros(padded_sequences.shape[0], total_time_steps - padded_sequences.shape[1])
+            pad_zero = torch.zeros(padded_sequences.shape[0], total_time_steps - padded_sequences.shape[1]).to(self.device)
             padded_sequences = torch.cat((padded_sequences, pad_zero), dim=1)
         edges_padded_sequences = padded_sequences.reshape(self.num_edges, F.shape[1], total_time_steps)
 
@@ -257,6 +257,7 @@ class Diffusion_Model(torch.nn.Module):
         #     downstream_flows = self.scalar.transform(downstream_flows)
         # with torch.no_grad():
         pred = self.forward(upstream_flows, downstream_flows)
+        self.g.ndata['pred'] = pred.unsqueeze(-1)
         # pred = pred.clamp(min=0)
         self.g.update_all(self.multi_steps_prediction, self.reduce_multisteps)
         multi_steps_pred = torch.concat((pred.unsqueeze(-1), self.g.ndata['multi_steps_pred']), dim=2)
@@ -278,9 +279,13 @@ class Diffusion_Model(torch.nn.Module):
         multi_step_pred = []
         F = edges.data['F']
         P = edges.data['e']
-        future_data = edges.src['feature'].view(-1, self.num_timesteps_input)
+        # future_data = edges.src['feature'].view(-1, self.num_timesteps_input)
+        future_data = edges.src['feature']
         '''pad src data with ma'''
         future_data = self.pad_src_data(future_data)
+        future_data[self.src_dst_id, :, self.num_timesteps_input] = edges.src['pred'][self.src_dst_id, :, 0]
+        future_data = self.pad_src_data(future_data)
+        future_data = future_data.view(-1, future_data.shape[-1])
         bc = edges.src['feature'].shape[1]
 
         T_idx = self.num_timesteps_input - edges.data['T_idx'].long() # T_idx: T_ab + 1
@@ -326,12 +331,12 @@ if __name__ == '__main__': #network 3
     data_dict = gen_data_dict(df_dict)
 
     # out of distribution
-    dataset_name = "crossroad"
-    # dataset_name = "train_station"
-    train_sc = ['sc_sensor/crossroad3', 'sc_sensor/crossroad8', 'sc_sensor/crossroad2', 'sc_sensor/crossroad5']
-    test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
-    # train_sc = ['sc_sensor/train3']
-    # test_sc = ['sc_sensor/train2']
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
+    # train_sc = ['sc_sensor/crossroad3', 'sc_sensor/crossroad8', 'sc_sensor/crossroad2', 'sc_sensor/crossroad5']
+    # test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
+    train_sc = ['sc_sensor/train3']
+    test_sc = ['sc_sensor/train2']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
@@ -365,6 +370,8 @@ if __name__ == '__main__': #network 3
     if dataset_name == "crossroad":
         src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
         dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
+        src_dst = np.intersect1d(dst, src)
+        src_dst_id = np.where(np.isin(src, src_dst))[0]
         g = dgl.graph((src, dst))
         g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
 
@@ -398,6 +405,8 @@ if __name__ == '__main__': #network 3
                         12,19,20,
                         15,16,9,10,22])
         g = dgl.graph((src, dst))
+        src_dst = np.intersect1d(dst, src)
+        src_dst_id = np.where(np.isin(src, src_dst))[0]
         g.edata['distance'] = torch.FloatTensor([40,40,28, # 3
                                                  40,50,32, # 4
                                                  40,50,32,
@@ -413,8 +422,11 @@ if __name__ == '__main__': #network 3
                                                  32,47,47,
                                                  32,32,49,49,35])
 
+
+
     # train
-    model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, horizons=pred_horizon, scalar=None)
+    model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, horizons=pred_horizon, device=device, scalar=None)
+    model.src_dst_id = src_dst_id
     # if dataset_name == "crossroad":
     #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network3_cross.pth"))
     # if dataset_name == "train_station":

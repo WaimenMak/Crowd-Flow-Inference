@@ -162,3 +162,7 @@ cython_debug/
 #others
 sc_sensor/
 .DS_Store
+/log.o
+/debug.py
+/test.py
+checkpoint/
