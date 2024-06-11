@@ -335,7 +335,7 @@ if __name__ == '__main__': #network 3
     dataset_name = "train_station"
     # train_sc = ['sc_sensor/crossroad3', 'sc_sensor/crossroad8', 'sc_sensor/crossroad2', 'sc_sensor/crossroad5']
     # test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
-    train_sc = ['sc_sensor/train3']
+    train_sc = ['sc_sensor/train1']
     test_sc = ['sc_sensor/train2']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -452,7 +452,7 @@ if __name__ == '__main__': #network 3
     dst_idx = dst.unique()
 
     # train
-    for epoch in range(500):
+    for epoch in range(200):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
 
@@ -504,10 +504,10 @@ if __name__ == '__main__': #network 3
 
     total_time = time.time() - start
 
-    if dataset_name == "crossroad":
-        torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3_cross.pth')
-    if dataset_name == "train_station":
-        torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3_train.pth')
+    # if dataset_name == "crossroad":
+    #     torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3_cross.pth')
+    # if dataset_name == "train_station":
+    #     torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network3_train.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])

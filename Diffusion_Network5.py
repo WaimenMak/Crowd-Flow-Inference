@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# @Time    : 29/02/2024 11:21
+# @Time    : 01/06/2024 21:18
 # @Author  : mmai
-# @FileName: Diffusion_Network4
+# @FileName: Diffusion_Network5
 # @Software: PyCharm
 
 import numpy as np
@@ -28,12 +28,12 @@ class Velocity_Model_NAM(nn.Module):
         self.ln21 = nn.LayerNorm(self._hidden_size)
         self.linear22 = torch.nn.Linear(self._hidden_size, 1)
 
-        self.linear3 = torch.nn.Linear(2, 1)
+        self.linear3 = torch.nn.Linear(2 + 1, 1)
         self.dropout = nn.Dropout(0.5)
         self.relu = torch.nn.ReLU()
         self.x_scalar = scalar
 
-    def forward(self, upstream, downstream):
+    def forward(self, upstream, downstream, T):
         # upstream : [node, batch_size, num_timesteps_input]
         # downstream : [node, batch_size, num_timesteps_input]
 
@@ -55,8 +55,8 @@ class Velocity_Model_NAM(nn.Module):
         x_down = self.linear22(x_down)
         # x_down = self.dropout(x_down)
         x_down = torch.sigmoid(x_down)
-
-        x = torch.cat((x_up, x_down), dim=2)
+        T = T.unsqueeze(1).repeat(1, upstream.shape[1], 1)
+        x = torch.cat((x_up, x_down, T), dim=2)
         out = self.linear3(x) # [num of edges, batch_size, 1]
         # out = self.relu(out)
         out = torch.log(1 + torch.exp(out))
@@ -222,7 +222,7 @@ class Diffusion_Model(torch.nn.Module):
         z = self.transition_probability(self.g.ndata['feature'])
         self.g.ndata['embedding'] = z   # for attention
         v = self.velocity_model(upstream_flows,
-                                downstream_flows) # v : [batch_size, num of edges]
+                                downstream_flows, self.alpha) # v : [batch_size, num of edges]
         self.g.edata['v'] = v.permute(1, 0) # [num_edges, batch_size]
 
         T = torch.divide(self.g.edata["distance"], v + 1e-5) # T : [batch_size, num of edges]
@@ -364,8 +364,8 @@ if __name__ == '__main__': #network 3
 
     # out of distribution
     # dataset_name = "crossroad"
-    # dataset_name = "train_station"
-    dataset_name = "maze"
+    dataset_name = "train_station"
+    # dataset_name = "maze"
     if dataset_name == "crossroad":
         train_sc = ['sc_sensor/crossroad2']
         test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
@@ -373,7 +373,7 @@ if __name__ == '__main__': #network 3
         train_sc = ['sc_sensor/train13']
         test_sc = ['sc_sensor/train2']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze19']
+        train_sc = ['sc_sensor/maze17']
         # train_sc = ['sc_sensor/maze2']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
 
@@ -395,7 +395,7 @@ if __name__ == '__main__': #network 3
     lags = 5
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=lags,
+    #                                                                              lags=6,
     #                                                                              horizons=pred_horizon,
     #                                                                              portion=0.7,
     #                                                                              shuffle=True)
@@ -586,7 +586,7 @@ if __name__ == '__main__': #network 3
     #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth')
 
     # for offline analysis
-    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_{dataset_name}_lags{lags}_hor{pred_horizon}.pth')
+    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network5_{dataset_name}_lags{lags}_hor{pred_horizon}.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
@@ -608,7 +608,7 @@ if __name__ == '__main__': #network 3
             train_loss.append(loss.item())
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
-            v = model.velocity_model(x_up, x_down)
+            # v = model.velocity_model(x_up, x_down)
 
             # multi_steps_pred = torch.cat((pred.unsqueeze(-1), multi_steps_pred), dim=2)
             multisteps_loss = loss_fn(multi_steps_pred[dst_idx, :, :], g.ndata['label'][dst_idx, :, :])
@@ -618,7 +618,7 @@ if __name__ == '__main__': #network 3
             print('Train Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Train Loss: {}'.format(loss.item()))
             print('Train Multi-Steps Loss: {}'.format(multisteps_loss.item()))
-            print('Train Velocity: {}'.format(v))
+            # print('Train Velocity: {}'.format(v))
             # print("Probabilities: {}".format(model.g.ndata['alpha'][[0,3],...]))
 
             print('*************')
@@ -633,7 +633,7 @@ if __name__ == '__main__': #network 3
             x_up = g.ndata['feature'][src] # [num of src, batch_size, num_timesteps_input], num of src = num of dst = num of edges
             x_down = g.ndata['feature'][dst] # [num of dst, batch_size, num_timesteps_input]
             test_loss.append(loss.item())
-            v = model.velocity_model(x_up, x_down)
+            # v = model.velocity_model(x_up, x_down)
 
             # multi_steps_pred = torch.cat((pred.unsqueeze(-1), multi_steps_pred), dim=2)
             multisteps_loss = loss_fn(multi_steps_pred[dst_idx, :, :], g.ndata['label'][dst_idx, :, :])
@@ -643,7 +643,7 @@ if __name__ == '__main__': #network 3
             print('Test Ground Truth: {}'.format(g.ndata['label'][dst_idx,:, 0]))
             print('Test Loss: {}'.format(loss.item()))
             print('Test Multi-Steps Loss: {}'.format(multisteps_loss.item()))
-            print('Test Velocity: {}'.format(v))
+            # print('Test Velocity: {}'.format(v))
             # print("Probabilities: {}".format(model.g.ndata['alpha'][[0,3],...]))
             # print("upstream flows: {}".format(x_up[0, ...]))
             print('*************')

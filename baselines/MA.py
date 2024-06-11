@@ -28,41 +28,58 @@ if __name__ == '__main__':
     from lib.utils import generating_ood_dataset, seperate_up_down, generating_insample_dataset, get_trainable_params_size
     import dgl
     import random
+    import pickle
+    from dgl.data.utils import load_graphs
 
     random.seed(1)
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
     parent_dir = '../sc_sensor'
-    # adding to the df_dict
-    # Loop through each subdirectory in the parent directory
-    df_dict = process_sensor_data(parent_dir, df_dict)
 
-    data_dict = gen_data_dict(df_dict)
+
+    dataset_name = "maze"
+    if dataset_name == "crossroad":
+        train_sc = ['sc_sensor/crossroad2']
+        test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
+    elif dataset_name == "train_station":
+        train_sc = ['sc_sensor/train13']
+        test_sc = ['sc_sensor/train2']
+    elif dataset_name == "maze":
+        train_sc = ['sc_sensor/maze19']
+        # train_sc = ['sc_sensor/maze2']
+        test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
+
+    # Load data
+    if dataset_name == "maze":
+        with open("../sc_sensor/maze/flow_data.pkl", "rb") as f:
+            data_dict = pickle.load(f)
+    else:
+        df_dict = process_sensor_data(parent_dir, df_dict)
+        data_dict = gen_data_dict(df_dict)
+        data_dict = seperate_up_down(data_dict)
 
     # dataset_name = "crossroad"
-    dataset_name = "train_station"
+    # dataset_name = "train_station"
     # train_sc = ['../sc_sensor/crossroad3', '../sc_sensor/crossroad8', '../sc_sensor/crossroad2', '../sc_sensor/crossroad5']
     # test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
-    train_sc = ['../sc_sensor/train1']
-    test_sc = ['../sc_sensor/train2']
+    # train_sc = ['../sc_sensor/train1']
+    # test_sc = ['../sc_sensor/train2']
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
     #         test_sc.append(sc)
-
-    #seperate upstream and downstream
-    data_dict = seperate_up_down(data_dict)
 
     # data_dict['./sc_sensor/crossroad4'] = data_dict['./sc_sensor/crossroad4'][..., :4]
     # for k in data_dict.keys():  # debug
     #     data_dict[k] = data_dict[k][:,[0,3]]
 
-    pred_horizon = 5 # 3, 5
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
-    # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=5,
-    #                                                                              horizons=pred_horizon,
-    #                                                                              portion=0.6,
-    #                                                                              shuffle=True)
+    pred_horizon = 7 # 3, 5
+    lags = 5
+    # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
+                                                                                 lags=lags,
+                                                                                 horizons=pred_horizon,
+                                                                                 portion=0.7,
+                                                                                 shuffle=True)
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -81,42 +98,15 @@ if __name__ == '__main__':
 
     # src = np.array([0, 2])
     # dst = np.array([3, 1])
-
+    g_data = load_graphs('../graphs/graphs.bin')
     if dataset_name == "crossroad":
-        src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
-        dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
-        g = dgl.graph((src, dst))
+        g = g_data[0][0]
+    elif dataset_name == "train_station":
+        g = g_data[0][1]
+    elif dataset_name == "maze":
+        g = g_data[0][2]
 
-    if dataset_name == "train_station":
-        src = np.array([3,3,3,
-                        4,4,4,
-                        7,7,7,
-                        22,22,22,
-                        23,23,23,23,23,
-                        8,8,8,8,8,
-                        11, 11, 11, 11, 11,
-                        14, 14, 14, 14, 14,
-                        18, 18, 18,
-                        17, 17, 17, 17, 17,
-                        13, 13, 13,
-                        21, 21, 21,
-                        0, 0, 0,
-                        12, 12, 12, 12, 12])
-        dst = np.array([5,6,23,
-                        2,6,23,
-                        2,5,23,
-                        2,5,6,
-                        9,10,15,16,13,
-                        22,10,13,15,16,
-                        22,9,15,16,13,
-                        22,9,10,16,13,
-                        12,1,20,
-                        13,15,9,10,22,
-                        20,1,19,
-                        19,1,12,
-                        12,19,20,
-                        15,16,9,10,22])
-        g = dgl.graph((src, dst))
+
 
     # g = dgl.graph((src, dst))
     # g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m

@@ -39,7 +39,8 @@ if __name__ == '__main__':
     #seperate upstream and downstream
     data_dict = seperate_up_down(data_dict)
     pred_horizon = 5 # 3, 5
-    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=pred_horizon, shuffle=True)
+    lags = 6
+    x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=5,
     #                                                                              horizons=pred_horizon,
@@ -143,9 +144,9 @@ if __name__ == '__main__':
     print('Multi-Step Test Loss: {}'.format(multi_steps_test_loss))
 
     '''save the model'''
-    if dataset_name == "crossroad":
-        model.save_model('../checkpoint/xgboost/offline_xgboost_cross.model')
-    if dataset_name == "train_station":
-        model.save_model('../checkpoint/xgboost/offline_xgboost_train_station.model')
+    # if dataset_name == "crossroad":
+    #     model.save_model('../checkpoint/xgboost/offline_xgboost_cross.model')
+    # if dataset_name == "train_station":
+    #     model.save_model('../checkpoint/xgboost/offline_xgboost_train_station.model')
 
 

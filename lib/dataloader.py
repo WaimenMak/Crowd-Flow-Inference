@@ -7,6 +7,7 @@ import random
 from torch.utils.data import Dataset, DataLoader
 import torch
 from collections import deque
+import numpy as np
 class FlowDataset(Dataset):
     def __init__(self, xs, ys, batch_size):
         self.x_data = torch.tensor(xs, dtype=torch.float32)
@@ -36,8 +37,19 @@ class replay_buffer():
             self.buffer.popleft()
             self.buffer.append(experience)
 
-    def sample(self, batch_size):  # return a tuple
-        batch = random.sample(self.buffer, batch_size)  # a list [(s,a,r,s), ...]
+    # def sample(self, batch_size):  # return a tuple
+    #     batch = random.sample(self.buffer, batch_size)  # a list [(s,a,r,s), ...]
+    #     return zip(*batch)
+    def sample(self, batch_size):
+        # Calculate linear weights
+        weights = np.arange(1, self.count + 1)
+        probabilities = weights / weights.sum()
+
+        # Sample indices based on the calculated probabilities
+        indices = np.random.choice(range(self.count), size=batch_size, p=probabilities)
+
+        # Select the experiences based on sampled indices
+        batch = [self.buffer[i] for i in indices]
         return zip(*batch)
 
     def clear(self):
