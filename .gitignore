@@ -161,6 +161,7 @@ cython_debug/
 
 #others
 sc_sensor/
+fig/
 .DS_Store
 /log.o
 /debug.py
