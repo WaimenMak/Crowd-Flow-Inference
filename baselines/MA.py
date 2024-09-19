@@ -45,7 +45,7 @@ if __name__ == '__main__':
         train_sc = ['sc_sensor/train13']
         test_sc = ['sc_sensor/train2']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze19']
+        train_sc = ['sc_sensor/maze0']
         # train_sc = ['sc_sensor/maze2']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
 

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import dgl.nn as dglnn
 
 class GCN(nn.Module):
-    def __init__(self, in_size, hid_size, out_size, scalar):
+    def __init__(self, in_size, hid_size, out_size, scalar, g):
         super().__init__()
         self.layers = nn.ModuleList()
         # two-layer GCN
@@ -25,16 +25,21 @@ class GCN(nn.Module):
         # self.ln = nn.LayerNorm(out_size)
         self.dropout = nn.Dropout(0.5)
         self.x_scalar = scalar
+        # calculate distance
+        # sigma = g.edata['distance'].std()
+        # self.distance = torch.exp(-g.edata['distance'] ** 2 / (sigma ** 2))
+        self.distance = g.edata['distance']
 
     def forward(self, g, features):
         # with torch.no_grad():
         #     features = self.x_scalar.transform(features)
         h = features
         for i, layer in enumerate(self.layers):
-            if i != 0:
-                h = self.dropout(h)
+            # if i != 0:
+            #     h = self.dropout(h)
             # h = self.ln(h)
-            h = layer(g, h, edge_weight=g.edata['distance'])
+            h = layer(g, h, edge_weight=self.distance)
+            # h = self.ln(h)
         return h
 
     def inference(self, g, features):
@@ -42,6 +47,27 @@ class GCN(nn.Module):
         #     features = self.x_scalar.transform(features)
         h = self.forward(g, features)
         return h.clamp(min=0)
+
+
+from dgl.nn.pytorch import GraphConv
+class GCNRegressor(torch.nn.Module):
+    def __init__(self, in_feats, h_feats, out_feats, g):
+        super(GCNRegressor, self).__init__()
+        self.conv1 = GraphConv(in_feats, h_feats, norm='both', weight=True)
+        self.conv2 = GraphConv(h_feats, out_feats, norm='both', weight=True)
+        sigma = g.edata['distance'].std()
+        self.distance = torch.exp(-g.edata['distance'] ** 2 / (sigma ** 2))
+
+    def forward(self, g, in_feat):
+        h = self.conv1(g, in_feat, edge_weight=self.distance)
+        h = F.relu(h)
+        h = self.conv2(g, h, edge_weight=self.distance)
+        return h
+
+    def inference(self, g, in_feat):
+        h = self.forward(g, in_feat)
+        return h.clamp(min=0)
+
 
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
@@ -64,8 +90,8 @@ if __name__ == '__main__':
 
     data_dict = gen_data_dict(df_dict)
 
-    dataset_name = "crossroad"
-    # dataset_name = "train_station"
+    # dataset_name = "crossroad"
+    dataset_name = "train_station"
     # dataset_name = "maze"
     if dataset_name == "crossroad":
         train_sc = ['../sc_sensor/crossroad2']
@@ -118,7 +144,7 @@ if __name__ == '__main__':
         g = g_data[0][1]
     elif dataset_name == "maze":
         g = g_data[0][2]
-
+    g = dgl.add_self_loop(g)
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
 
@@ -127,14 +153,15 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(train_dataset, batch_size=16)
 
     # train
-    model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=pred_horizon-1, scalar=x_scalar)  # out_size: prediction horizon
+    # model = GCN(in_size=num_input_timesteps, hid_size=128, out_size=pred_horizon-1, scalar=x_scalar, g=g)  # out_size: prediction horizon
+    model = GCNRegressor(in_feats=num_input_timesteps, h_feats=128, out_feats=pred_horizon-1, g=g)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
 
     src, dst = g.edges()
     src_idx = src.unique()
     dst_idx = dst.unique()
-    g = dgl.add_self_loop(g)
+    # g = dgl.add_self_loop(g)
     # train
     for epoch in range(2000):
         l = []

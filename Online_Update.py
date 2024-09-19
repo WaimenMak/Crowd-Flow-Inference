@@ -83,7 +83,7 @@ class test_then_train_env():
                 v_list, alpha_list, F_list, e_list, route_flow, route_speed)
 
 if __name__ == '__main__':
-    from Online_Models import (Online_Diffusion, Online_MA, ELM, Online_GCN, Online_GAT, Online_LSTM,
+    from Online_Models import (Online_Diffusion, Online_MA, ELM, Online_GCN, Online_GAT, Online_LSTM, Online_GCNLSTM,
                                Online_Diffusion_UQ, Online_Xgboost, Single_Model, Online_LSTM_Single)
     from lib.utils import gen_data_dict, process_sensor_data, StandardScaler
     from lib.utils import seperate_up_down
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     parser.add_argument('--pred_horizons', type=int, default=7, help='Prediction horizons')
     parser.add_argument('--chunk_size', type=int, default=15, help='Chunk size')
     parser.add_argument('--train_steps', type=int, default=130, help='Training iterations for each chunk')
-    parser.add_argument('--model_type', type=str, default='Online_LSTM', help='Type of model')
+    parser.add_argument('--model_type', type=str, default='Online_GCNLSTM', help='Type of model')
     parser.add_argument('--no-buffer', dest='buffer', action='store_false',
                         help='Whether not to use buffer')
     parser.add_argument('--no-save', dest='save', action='store_false',
@@ -156,12 +156,12 @@ if __name__ == '__main__':
                    'sc_sensor/crossroad1', 'sc_sensor/crossroad10', 'sc_sensor/crossroad11', 'sc_sensor/crossroad8',
                    'sc_sensor/crossroad2_2', 'sc_sensor/crossroad6', 'sc_sensor/crossroad7', 'sc_sensor/crossroad9',]
     if dataset_name == "maze":
-        # test_sc = ['sc_sensor/maze14', 'sc_sensor/maze10', 'sc_sensor/maze9', 'sc_sensor/maze8', 'sc_sensor/maze7', 'sc_sensor/maze3', 'sc_sensor/maze2',
-        #              'sc_sensor/maze6', 'sc_sensor/maze5', 'sc_sensor/maze4',  'sc_sensor/maze1', 'sc_sensor/maze11', 'sc_sensor/maze15',
-        #            'sc_sensor/maze12', 'sc_sensor/maze13', 'sc_sensor/maze16', 'sc_sensor/maze17', 'sc_sensor/maze18']
         test_sc = ['sc_sensor/maze14', 'sc_sensor/maze2', 'sc_sensor/maze3', 'sc_sensor/maze1', 'sc_sensor/maze8',
                    'sc_sensor/maze17', 'sc_sensor/maze16', 'sc_sensor/maze15', 'sc_sensor/maze19', 'sc_sensor/maze12',
                    'sc_sensor/maze8_2', 'sc_sensor/maze10_2', 'sc_sensor/maze18', 'sc_sensor/maze13', 'sc_sensor/maze20']
+        # test_sc = ['sc_sensor/maze22', 'sc_sensor/maze2', 'sc_sensor/maze3', 'sc_sensor/maze1', 'sc_sensor/maze8',
+        #            'sc_sensor/maze21', 'sc_sensor/maze16', 'sc_sensor/maze15', 'sc_sensor/maze19', 'sc_sensor/maze12',
+        #            'sc_sensor/maze8_2', 'sc_sensor/maze10_2', 'sc_sensor/maze18', 'sc_sensor/maze13', 'sc_sensor/maze20']
 
 
     if dataset_name == "maze":
@@ -200,7 +200,9 @@ if __name__ == '__main__':
     elif args.model_type == 'Online_GCN':
         model = Single_Model(model_type=Online_GCN, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=128,
                              chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
-
+    elif args.model_type == 'Online_GCNLSTM':
+        model = Single_Model(model_type=Online_GCNLSTM, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=32, num_layers=2,
+                             chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_GAT':
         model = Single_Model(model_type=Online_GAT, dataset=dataset_name, g=g, hidden_units=32, pred_horizon=pred_horizon,
                                  lags=lags, device=device, num_heads=3, train_steps=args.train_steps, chunk_size=chunk_size, buffer=args.buffer)
@@ -237,6 +239,7 @@ if __name__ == '__main__':
 
     # save curve data, v, alpha as np array
     logger.info(f"Total error: {np.sum(curve_data)}") # total error
+    logger.info(f"Mean error: {np.mean(curve_data)}") # mean error
     if args.save:
         print(12)
         np.save(f'checkpoint/{args.model_type}_{dataset_name}_curve_error_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', curve_data)
@@ -251,14 +254,14 @@ if __name__ == '__main__':
             np.save(f'checkpoint/{args.model_type}_{dataset_name}_v_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', v)
             np.save(f'checkpoint/{args.model_type}_{dataset_name}_alpha_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', alpha)
             np.save(f'checkpoint/{args.model_type}_{dataset_name}_F_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', F)
-            # np.save(f'checkpoint/{args.model_type}_{dataset_name}_route_flow_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', route_flow)
+
             np.save(f'checkpoint/{args.model_type}_{dataset_name}_e_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', e)
             pickle.dump(route_flow, open(f'checkpoint/{args.model_type}_{dataset_name}_route_flow_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.pkl', 'wb'))
             pickle.dump(route_speed, open(f'checkpoint/{args.model_type}_{dataset_name}_route_speed_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.pkl', 'wb'))
 
             # save the model
-            torch.save(model.model.model.state_dict(),
-                       f"./checkpoint/diffusion/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+            # torch.save(model.model.model.state_dict(),
+            #            f"./checkpoint/diffusion/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
         elif args.model_type == 'Online_LSTM':
             torch.save(model.model.model.state_dict(),
                        f"./checkpoint/lstm/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")

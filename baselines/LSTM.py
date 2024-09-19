@@ -41,8 +41,8 @@ if __name__ == '__main__':
 
     # out of distribution
     # dataset_name = "crossroad"
-    dataset_name = "train_station"
-    # dataset_name = "maze"
+    # dataset_name = "train_station"
+    dataset_name = "maze"
     if dataset_name == "crossroad":
         train_sc = ['../sc_sensor/crossroad2']
         test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
@@ -50,7 +50,7 @@ if __name__ == '__main__':
         train_sc = ['../sc_sensor/train1']
         test_sc = ['../sc_sensor/train2']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze0']
+        train_sc = ['sc_sensor/maze19']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
 
     # for sc in data_dict.keys():

@@ -147,9 +147,9 @@ if __name__ == '__main__':
 
     data_dict = gen_data_dict(df_dict)
 
-    dataset_name = "crossroad"
+    # dataset_name = "crossroad"
     # dataset_name = "train_station"
-    # dataset_name = "maze"
+    dataset_name = "maze"
     if dataset_name == "crossroad":
         train_sc = ['../sc_sensor/crossroad2']
         test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
@@ -201,7 +201,7 @@ if __name__ == '__main__':
         g = g_data[0][1]
     elif dataset_name == "maze":
         g = g_data[0][2]
-
+    g = dgl.add_self_loop(g)
 
     src, dst = g.edges()
     src_idx = np.unique(src)

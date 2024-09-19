@@ -367,13 +367,13 @@ if __name__ == '__main__': #network 3
     # dataset_name = "train_station"
     dataset_name = "maze"
     if dataset_name == "crossroad":
-        train_sc = ['sc_sensor/crossroad2']
+        train_sc = ['sc_sensor/crossroad11']
         test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
     elif dataset_name == "train_station":
         train_sc = ['sc_sensor/train13']
         test_sc = ['sc_sensor/train2']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze19']
+        train_sc = ['sc_sensor/maze20']
         # train_sc = ['sc_sensor/maze2']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
 
@@ -585,8 +585,11 @@ if __name__ == '__main__': #network 3
     # if dataset_name == "maze":
     #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth')
 
+
+
     # for offline analysis
-    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_{dataset_name}_lags{lags}_hor{pred_horizon}.pth')
+    sc_name = train_sc[0].split('/')[1]
+    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}_{sc_name}.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
