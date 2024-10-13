@@ -4,6 +4,9 @@
 # @FileName: Diffusion_Network4
 # @Software: PyCharm
 
+"""
+This is the main file for implementation of the diffusion network
+"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -64,14 +67,6 @@ class Velocity_Model_NAM(nn.Module):
 
         return out.clamp(max=3)
 
-    # def inference(self, upstream, downstream):
-    #     with torch.no_grad():
-    #         up_sum = torch.sum(upstream, dim=2)  # [node, batch_size]
-    #         up_idx = (up_sum == 0).nonzero(as_tuple=True)
-    #         out = self.forward(upstream, downstream)
-    #         out[up_idx[1], up_idx[0]] = 0
-    #
-    #     return out
 
 class Probabilistic_Model(torch.nn.Module):
     def __init__(self, graph, num_edges, num_timesteps_input, hidden_units, scalar):
@@ -100,6 +95,9 @@ class Probabilistic_Model(torch.nn.Module):
         self.to(self.device)
 
     def edge_attention(self, edges):
+        """
+        Compute the attention score using the edge feature, which is the routing probability
+        """
         # up2down = torch.sum(edges.src['feature'] * edges.data['diffusion'], dim=2).unsqueeze(-1) # [num_edges, batch_size]
         # up2down = edge_softmax(self.g, up2down, norm_by='src') # [num_edges, batch_size]
         # F = torch.sum(edges.data["diffusion"], dim=2, keepdim=True) # [num_edges, batch_size, num_timesteps_input]
@@ -196,13 +194,19 @@ class Diffusion_Model(torch.nn.Module):
         return {'diffusion': edges_padded_sequences, "F": F}
 
     def message_func(self, edges):
+        """
+        Compute the mltistep prediction on edges
+        """
         # 'message':[num_edges, batch_size, num_timesteps_input], 'upstream':[num_edges, batch_size, num_timesteps_input]
-        pred_up2down = edges.data['e'] * torch.sum(edges.data['diffusion'] * edges.src['feature'], dim=2)
+        pred_up2down = edges.data['e'] * torch.sum(edges.data['diffusion'] * edges.src['feature'], dim=2) # weighted sum of diffusion and upstream flow
         # return {'message': edges.data['diffusion'], 'upstream': edges.src['feature'], 'atten': edges.data['e']}
         self.g.edata['message'] = pred_up2down
         return {'message': pred_up2down}
 
     def reduce_func(self, nodes):
+        """
+        Compute the mltistep prediction on nodes by summing the messages from neighbors.
+        """
         # alpha = func.softmax(nodes.mailbox['atten'], dim=1) # nodes.mailbox['atten']: [num_dst_nodes, num_neighbors, bc]
         # alpha = nodes.mailbox['atten']
         # pred_up2down = torch.sum(nodes.mailbox['message'] * nodes.mailbox['upstream'], dim=3) # [num_dst_nodes, num_neighbors, bc]
@@ -213,6 +217,9 @@ class Diffusion_Model(torch.nn.Module):
         return {'pred': h}
 
     def forward(self, upstream_flows, downstream_flows):
+        """
+        Single-step prediction
+        """
         # upstream flows : [num of src, batch_size, num_timesteps_input]
         # downstream flows : [num of dst, batch_size, num_timesteps_input]
         # with torch.no_grad():
@@ -231,7 +238,7 @@ class Diffusion_Model(torch.nn.Module):
         T_idx = torch.round(T/self.time_units)
 
         '''remark: < 0  = 0, >= num_timesteps_input = num_timesteps_input [0, num_timesteps_input-1]'''
-        T_idx = T_idx.masked_fill(T_idx < 0, 0)
+        # T_idx = T_idx.masked_fill(T_idx < 0, 0)
         T_idx = T_idx.masked_fill(T_idx >= self.num_timesteps_input, self.num_timesteps_input-1)
         # T_idx = 0 * torch.ones_like(T)
 
@@ -271,10 +278,9 @@ class Diffusion_Model(torch.nn.Module):
         return data
 
     def inference(self, upstream_flows, downstream_flows):
-        '''multi-step prediction'''
-        # with torch.no_grad():
-        #     upstream_flows = self.scalar.transform(upstream_flows)
-        #     downstream_flows = self.scalar.transform(downstream_flows)
+        """
+        multi-step prediction
+        """
 
         multi_steps_pred = []
         pred = self.forward(upstream_flows, downstream_flows)
@@ -659,8 +665,6 @@ if __name__ == '__main__': #network 3
 
     print('Total Trainable Parameters: {}'.format(get_trainable_params_size(model))) # 1287
     print(model.alpha)
-    # save checkpoint
-    # torch.save(model.state_dict(), './checkpoint/diffusion/diffusion_model_network1.pth')
 
 # print model parameters
 # for name, param in model.named_parameters():
