@@ -4,6 +4,10 @@
 # @FileName: Diffusion_Network5
 # @Software: PyCharm
 
+"""
+Velocity model: input: The sum of upstream and downstream flows
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,11 +28,12 @@ class Velocity_Model_NAM(nn.Module):
         self.ln11 = nn.LayerNorm(self._hidden_size)
         self.linear12 = torch.nn.Linear(self._hidden_size, 1)
 
-        self.linear21 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
-        self.ln21 = nn.LayerNorm(self._hidden_size)
-        self.linear22 = torch.nn.Linear(self._hidden_size, 1)
+        # self.linear21 = torch.nn.Linear(num_timesteps_input, self._hidden_size)
+        # self.ln21 = nn.LayerNorm(self._hidden_size)
+        # self.linear22 = torch.nn.Linear(self._hidden_size, 1)
 
-        self.linear3 = torch.nn.Linear(2 + 1, 1)
+        # self.linear3 = torch.nn.Linear(2 + 1, 1)
+        self.linear3 = torch.nn.Linear(self._hidden_size, 1)
         self.dropout = nn.Dropout(0.5)
         self.relu = torch.nn.ReLU()
         self.x_scalar = scalar
@@ -40,25 +45,27 @@ class Velocity_Model_NAM(nn.Module):
         # with torch.no_grad():
         #     upstream = self.x_scalar.transform(upstream)
         #     downstream = self.x_scalar.transform(downstream)
-        x_up = self.linear11(upstream)
+        x_up = self.linear11(upstream + downstream)
         x_up = self.dropout(x_up)
         x_up = self.ln11(x_up)
         x_up = self.relu(x_up)
         x_up = self.linear12(x_up)
         # x_up = self.dropout(x_up)
-        x_up = torch.sigmoid(x_up)
+        # x_up = torch.sigmoid(x_up)
 
-        x_down = self.linear21(downstream)
-        x_down = self.dropout(x_down)
-        x_down = self.ln21(x_down)
-        x_down = self.relu(x_down)
-        x_down = self.linear22(x_down)
+        # x_down = self.linear21(downstream)
         # x_down = self.dropout(x_down)
-        x_down = torch.sigmoid(x_down)
+        # x_down = self.ln21(x_down)
+        # x_down = self.relu(x_down)
+        # x_down = self.linear22(x_down)
+        # x_down = self.dropout(x_down)
+        # x_down = torch.sigmoid(x_down)
+
         T = T.unsqueeze(1).repeat(1, upstream.shape[1], 1)
-        x = torch.cat((x_up, x_down, T), dim=2)
-        out = self.linear3(x) # [num of edges, batch_size, 1]
+        # x = torch.cat((x_up, x_down, T), dim=2)
+        # out = self.linear3(x) # [num of edges, batch_size, 1]
         # out = self.relu(out)
+        out = x_up
         out = torch.log(1 + torch.exp(out))
         out = out.squeeze(2).transpose(1, 0) # [batch_size, num of edges]
 
@@ -367,13 +374,13 @@ if __name__ == '__main__': #network 3
     dataset_name = "train_station"
     # dataset_name = "maze"
     if dataset_name == "crossroad":
-        train_sc = ['sc_sensor/crossroad2']
+        train_sc = ['sc_sensor/crossroad11']
         test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
     elif dataset_name == "train_station":
         train_sc = ['sc_sensor/train13']
         test_sc = ['sc_sensor/train2']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze17']
+        train_sc = ['sc_sensor/maze20']
         # train_sc = ['sc_sensor/maze2']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
 
@@ -578,12 +585,12 @@ if __name__ == '__main__': #network 3
     total_time = time.time() - start
 
     # for base model in online learning
-    # if dataset_name == "crossroad":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_cross_lags{lags}_hor{pred_horizon}.pth')
-    # if dataset_name == "train_station":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_train_lags{lags}_hor{pred_horizon}.pth')
-    # if dataset_name == "maze":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth')
+    if dataset_name == "crossroad":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network5_cross_lags{lags}_hor{pred_horizon}.pth')
+    if dataset_name == "train_station":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network5_train_lags{lags}_hor{pred_horizon}.pth')
+    if dataset_name == "maze":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network5_maze_lags{lags}_hor{pred_horizon}.pth')
 
     # for offline analysis
     torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network5_{dataset_name}_lags{lags}_hor{pred_horizon}.pth')
