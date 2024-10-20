@@ -5,7 +5,7 @@
 # @Software: PyCharm
 
 """
-Velocity model: input: The sum of upstream and downstream flows
+Velocity model: input: The sum of upstream and downstream flows, accuracy increased, but the predicted velocity is not accurate
 """
 
 import numpy as np
@@ -137,14 +137,14 @@ class Probabilistic_Model(torch.nn.Module):
         return z
 
 
-class Diffusion_Model(torch.nn.Module):
+class Diffusion_Model_plus(torch.nn.Module):
     def __init__(self, num_edges, num_timesteps_input, graph, horizons, scalar, device, time_units=10):
         """
 
         :param num_nodes: number of ancestor nodes
         :param num_timesteps_input: time steps of input
         """
-        super(Diffusion_Model, self).__init__()
+        super(Diffusion_Model_plus, self).__init__()
         v_model_hid_dim = 32
         p_model_hid_dim = 64
         self.velocity_model = Velocity_Model_NAM(num_timesteps_input, hidden_units=v_model_hid_dim, scalar=scalar)
@@ -371,8 +371,8 @@ if __name__ == '__main__': #network 3
 
     # out of distribution
     # dataset_name = "crossroad"
-    dataset_name = "train_station"
-    # dataset_name = "maze"
+    # dataset_name = "train_station"
+    dataset_name = "maze"
     if dataset_name == "crossroad":
         train_sc = ['sc_sensor/crossroad11']
         test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
@@ -402,7 +402,7 @@ if __name__ == '__main__': #network 3
     lags = 5
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
-    #                                                                              lags=6,
+    #                                                                              lags=lags,
     #                                                                              horizons=pred_horizon,
     #                                                                              portion=0.7,
     #                                                                              shuffle=True)
@@ -505,7 +505,7 @@ if __name__ == '__main__': #network 3
 
 
     # train
-    model = Diffusion_Model(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, horizons=pred_horizon, device=device, scalar=None)
+    model = Diffusion_Model_plus(num_edges=len(src), num_timesteps_input=x_train.shape[1], graph=g, horizons=pred_horizon, device=device, scalar=None)
     model.src_dst_id = src_dst_id
     # if dataset_name == "crossroad":
     #     model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_network3_cross.pth"))
