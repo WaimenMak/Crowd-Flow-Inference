@@ -5,6 +5,7 @@
 # @Software: PyCharm
 
 from Diffusion_Network4 import Diffusion_Model
+from Diffusion_Network5 import Diffusion_Model_plus
 # from Diffusion_Network3_asc import Diffusion_Model
 # from Diffusion_Network_UQ import NegativeBinomialDistributionLoss, Diffusion_Model_UQ
 from Diffusion_Network4_UQ import NegativeBinomialDistributionLoss, Diffusion_Model_UQ
@@ -44,10 +45,10 @@ class Single_Model(): # Online Model
         single model update with regularization
         """
         # self.model.fine_tune(kwargs['observation'], kwargs['label'])
-        try:
-            self.model.train()
-        except:
-            pass
+        # try:
+        #     self.model.train()
+        # except:
+        #     pass
         self.model.learn(kwargs['observation'], kwargs['label'])
 
 class Ensemble_DTEL(): # Online Model
@@ -143,87 +144,131 @@ class Base_Learner(): # Base Learner of Online Model
     def fine_tune(self, observation, label):
         pass
 
+class Online_Diffusion_plus(Base_Learner):
+    def __init__(self, pred_horizon, dataset, lags, g, device, train_steps, chunk_size, buffer):
+        super().__init__(pred_horizon, lags, g, device, train_steps, buffer, chunk_size)
+        self.model = Diffusion_Model_plus(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None, device=device)
+        self.name = "Online_Diffusion_plus"
+        self.model.src_dst_id = self.src_dst_id
+        if dataset == "train_station":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_train_lags{lags}_hor{pred_horizon}.pth"))
+        elif dataset == "crossroad":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_cross_lags{lags}_hor{pred_horizon}.pth"))
+        elif dataset == "maze":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_maze_lags{lags}_hor{pred_horizon}.pth"))
 
-class Online_Diffusion_Density(Base_Learner):
-    def __init__(self, pred_horizon, lags, g, device, train_steps, chunk_size, buffer):
-        super().__init__(pred_horizon, lags, g, device, train_steps, buffer)
-        self.model = Diffusion_Model_Density(num_edges=len(self.src), num_timesteps_input=lags+1, graph=g, horizons=pred_horizon, scalar=None)
-        # self.model.load_state_dict(torch.load("./checkpoint/diffusion/diffusion_model_density.pth"))
-        self.optimizer = torch.optim.Adam([
-            {'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
-            {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5},
-            {'params': self.model.density_layer.parameters(), 'lr': 0.001, 'weight_decay': 1e-5}
-        ])
-        self.prop_opt = torch.optim.Adam(self.model.transition_probability.parameters(), lr=0.001, weight_decay=1e-5)
+        self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},  # 0.001 -> 0.005
+                                                       {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
+        # self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5}])
+        # self.opt_alpha = torch.optim.Adam([{'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
+        self.prop_opt = torch.optim.Adam(self.model.transition_probability.parameters(), lr=0.003, weight_decay=1e-5)
+        # self.prop_opt = torch.optim.Adam([
+        #     {'params': self.model.transition_probability.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
+        #     {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}
+        # ])
+        self.early_stopper = EarlyStopper(tolerance=6, min_delta=0.01)
+        self.step_size = 20  # for curriculum learning
+        # self.task_level = 1  # start from second step
         self.loss_fn = torch.nn.MSELoss()
-        self.chunk_size = chunk_size
+
         if self.buffer:
             # self.batch_size = self.chunk_size
             self.batch_size = 10
             # self.data_capacity = 1000 // self.chunk_size
             self.data_capacity = 1000
+            # self.data_capacity = 500
         else:
             self.data_capacity = self.chunk_size
         self.data_buffer = replay_buffer(self.data_capacity)
 
-    # def train(self, observation, label):
-    #     # self.g.ndata['feature'] = observation # [node, batch_size, num_timesteps_input]
-    #     # self.g.ndata['label'] = label # [node, batch_size, pred_horizon]
-    #     for s in range(observation.shape[1]):
-    #         self.data_buffer.add(observation[:, s, :], label[:, s, :])
-    #     # self.data_buffer.add(observation, label)
-    #     for iteration in range(self.train_steps):
-    #         if iteration == 0:
-    #             x, y = [observation], [label]
-    #             self.g.ndata['feature'] = torch.cat(x, dim=1)
-    #             self.g.ndata['label'] = torch.cat(y, dim=1)
-    #         else:
-    #             try:
-    #                 # x, y = self.data_buffer.sample(np.round(self.batch_size//self.chunk_size)) # 1
-    #                 x, y = self.data_buffer.sample(self.batch_size)
-    #                 # print(f"sampled data: {torch.cat(x, dim=1).shape[1]}")
-    #             except:
-    #                 x, y = self.data_buffer.sample(len(self.data_buffer))
-    #
-    #             self.g.ndata['feature'] = torch.stack(x, dim=1)
-    #             self.g.ndata['label'] = torch.stack(y, dim=1)
-    #             # print(f"sampled data: {torch.cat(x, dim=1).shape[1]}")
-    #         # self.g.ndata['feature'] = torch.cat(x, dim=1)
-    #         # self.g.ndata['label'] = torch.cat(y, dim=1)
-    #
-    #         if iteration < self.train_steps / 2:
-    #             pred = self.model(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst]) # [num_dst, batch_size]
-    #             loss = self.loss_fn(pred[self.dst_idx], self.g.ndata['label'][self.dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
-    #         else:
-    #             _, multi_steps_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
-    #             loss = self.loss_fn(multi_steps_pred[self.dst_idx, :, :], self.g.ndata['label'][self.dst_idx, :, :])
-    #
-    #         self.optimizer.zero_grad()
-    #         # self.model.prop_opt.zero_grad()
-    #         loss.backward()
-    #         # self.model.prop_opt.step()
-    #         self.optimizer.step()
-    #
-    #         # update transition probability
-    #         if iteration % 2 == 0:
-    #
-    #             if self.pred_horizon > 1 and iteration > self.train_steps / 2:
-    #                 '''add multi steps loss'''
-    #                 _, multi_steps_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
-    #                 loss2 = self.loss_fn(multi_steps_pred[self.dst_idx, :, :], self.g.ndata['label'][self.dst_idx, :, :])
-    #             else:
-    #                 '''single step'''
-    #                 pred = self.model(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
-    #                 loss2 = self.loss_fn(pred[self.dst_idx], self.g.ndata['label'][self.dst_idx,:, 0])
-    #
-    #             self.model.prop_opt.zero_grad()
-    #             loss2.backward()
-    #             self.model.prop_opt.step()
-    #
-    # def inference(self, observation):
-    #     self.g.ndata['feature'] = observation # [node, batch_size, num_timesteps_input]
-    #     pred, multistep_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
-    #     return multistep_pred
+    def eval(self, eval_x, eval_y):
+        # early stopping
+        self.g.ndata['feature'] = eval_x
+        self.g.ndata['label'] = eval_y
+
+        # pred = self.model(eval_x[self.src], eval_x[self.dst]).detach()  # [num_dst, batch_size]
+        _, pred = self.model.inference(eval_x[self.src], eval_x[self.dst])
+        # eval_loss = self.loss_fn(pred[self.dst_idx, :, 0].detach(), eval_y[self.dst_idx, :, 0])
+        eval_loss = self.loss_fn(pred[self.dst_idx].detach(), eval_y[self.dst_idx,:, :])
+        return self.early_stopper.early_stop(eval_loss)
+
+    def learn(self, observation, label):
+        self.task_level = 1
+        # self.g.ndata['feature'] = observation # [node, batch_size, num_timesteps_input]
+        # self.g.ndata['label'] = label # [node, batch_size, pred_horizon]
+        self.early_stopper.reset()
+        for s in range(observation.shape[1]):
+            self.data_buffer.add(observation[:, s, :], label[:, s, :])
+
+        train_x = observation[:, :self.train_portion, :]
+        train_y = label[:, :self.train_portion, :]
+        eval_x = observation[:, self.train_portion:, :]
+        eval_y = label[:, self.train_portion:, :]
+        # self.data_buffer.add(observation, label)
+        for iteration in range(self.train_steps):
+
+            if iteration <= 15:  # first train on the new observation
+                # x, y = train_x, train_y
+                self.g.ndata['feature'] = train_x
+                self.g.ndata['label'] = train_y
+            else:
+                try:
+                    # x, y = self.data_buffer.sample(np.round(self.batch_size//self.chunk_size)) # 1
+                    x, y = self.data_buffer.sample(self.batch_size)
+                    # print(f"sampled data: {torch.cat(x, dim=1).shape[1]}")
+                except:
+                    x, y = self.data_buffer.sample(len(self.data_buffer))
+
+                self.g.ndata['feature'] = torch.stack(x, dim=1)
+                self.g.ndata['label'] = torch.stack(y, dim=1)
+                # print(f"sampled data: {torch.cat(x, dim=1).shape[1]}")
+            # self.g.ndata['feature'] = torch.cat(x, dim=1)
+            # self.g.ndata['label'] = torch.cat(y, dim=1)
+
+            # if iteration < self.train_steps / 2:
+            if iteration < 0:
+                pred = self.model(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst]) # [num_dst, batch_size]
+                loss = self.loss_fn(pred[self.dst_idx], self.g.ndata['label'][self.dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
+                # weighted loss
+                # individual_loss = F.mse_loss(pred[self.dst_idx], self.g.ndata['label'][self.dst_idx,:, 0], reduction='none')
+                # with torch.no_grad():
+                #     max_loss = individual_loss.sum()
+                #     weights = individual_loss / max_loss
+                # loss = torch.mean(weights * individual_loss)
+
+            else:
+                _, multi_steps_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
+                loss = self.loss_fn(multi_steps_pred[self.dst_idx, :, :], self.g.ndata['label'][self.dst_idx, :, :])
+                # loss = self.loss_fn(multi_steps_pred[self.dst_idx, :, :self.task_level], self.g.ndata['label'][self.dst_idx, :, :self.task_level])
+                # if (iteration+1) % self.step_size == 0 and self.task_level <= self.pred_horizon:
+                #     self.task_level += 1
+            if (iteration) % 5 == 0:
+                if self.eval(eval_x, eval_y): break
+                # pass
+            self.optimizer.zero_grad()
+            self.model.prop_opt.zero_grad()
+            # self.opt_alpha.zero_grad()
+
+            loss.backward()
+            # if iteration > self.train_steps / 2:
+                # self.opt_alpha.step()
+            if iteration % 2 == 0:
+                self.optimizer.step()
+                # self.model.prop_opt.step()
+            # self.optimizer.step()
+            self.model.prop_opt.step()
+
+
+    def fine_tune(self, observation, label):
+        pass
+
+    def inference(self, observation):
+        self.g.ndata['feature'] = observation # [node, batch_size, num_timesteps_input]
+        pred, multistep_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
+        return multistep_pred
+
+    def get_prob(self):
+        return self.g.edata['e'] # [num_edges, batch_size]
 
 class Online_Diffusion(Base_Learner):
     def __init__(self, pred_horizon, dataset, lags, g, device, train_steps, chunk_size, buffer):
@@ -292,10 +337,10 @@ class Online_Diffusion(Base_Learner):
                 # x, y = [train_x], [train_y]
                 # self.g.ndata['feature'] = torch.cat(x, dim=1)
                 # self.g.ndata['label'] = torch.cat(y, dim=1)
-            if iteration <= 15:
-                x, y = train_x, train_y
-                self.g.ndata['feature'] = x
-                self.g.ndata['label'] = y
+            if iteration <= 15:  # first train on the new observation
+                # x, y = train_x, train_y
+                self.g.ndata['feature'] = train_x
+                self.g.ndata['label'] = train_y
             else:
                 try:
                     # x, y = self.data_buffer.sample(np.round(self.batch_size//self.chunk_size)) # 1
