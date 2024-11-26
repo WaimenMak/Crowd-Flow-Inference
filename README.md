@@ -52,8 +52,9 @@ The $CossRoad$ is the most basic infrastructure. We develop this simulation usin
 each entrance ranges from 1 to 8 (peds/10s).
 
 <div style="text-align: center;">
-    <img src="asset/cross2.png" alt="Alt text" width="250" height="200">
+    <img src="asset/cross2.png" alt="Alt text" width="240" height="200">
 </div>
+
 
 
 ### Maze
@@ -66,8 +67,9 @@ bounded with a minimum of 0.2 m/s and a maximum of 1.6 m/s.
 To scale a picture in Markdown, you can use HTML tags. Here is an example of how to scale an image:
 
 <div style="text-align: center;">
-    <img src="asset/maze2.png" alt="Alt text" width="250" height="200">
+    <img src="asset/maze2.png" alt="Alt text" width="240" height="200">
 </div>
+
 
 
 
