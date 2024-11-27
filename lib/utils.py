@@ -217,8 +217,6 @@ def load_dataset_rnn(dataset_dir, batch_size, test_batch_size=None, **kwargs):
 
     return data
 
-
-
 def load_graph_data(pkl_filename):
     sensor_ids, sensor_id_to_ind, adj_mx = load_pickle(pkl_filename)
     return sensor_ids, sensor_id_to_ind, adj_mx
@@ -300,8 +298,6 @@ def _compute_sampling_threshold(global_step, k):
     :return:
     """
     return k / (k + math.exp(global_step / k))
-
-
 
 def train(model):
     import time
@@ -399,8 +395,6 @@ def train(model):
         train_rmse_loss = train_rmse_loss / train_iters
         print(f"Epoch: {epoch}, train_RMSE: {train_rmse_loss}")
 
-
-
         # validation
         if epoch % 5 == 0 and epoch != 0 :
             val_mse_loss = 0
@@ -424,8 +418,6 @@ def train(model):
                     val_rmse = sum(val_rmse) / len(val_rmse) / batch_size
 
                     val_mse_loss += val_rmse.item()
-
-
 
             val_mse_loss = val_mse_loss / val_iters
 
@@ -758,8 +750,6 @@ def generating_ood_dataset(data_dict, train_sc, test_sc, lags=5, horizons=2,
             y_test = np.stack(y_test, axis=0)
             all_test_x.append(x_test)
             all_test_y.append(y_test)
-
-
 
     zipped_lists = list(zip(all_x, all_y))
     if shuffle:
