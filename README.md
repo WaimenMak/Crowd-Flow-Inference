@@ -29,7 +29,7 @@ Crowd-Flow-Inference/
 - data/: Directory for data files.
 - README.md: Project documentation.
 - requirements.txt: List of dependencies.
-- graphs/: Directory for storing the graph data, i.e., the distance matrix.
+- graphs/: Directory for storing the graph data, i.e., the distance matrix. graphs.bin is the graph data file of the three infrastructures. We use function `save_graph`in `DGL` to generate the `graphs.bin` file.
 
 Initial model in ./checkpoint/{model_name}/model.pth
 
@@ -71,14 +71,10 @@ To scale a picture in Markdown, you can use HTML tags. Here is an example of how
 </div>
 
 
-
-
-
 ### Train Station
 The $Train Station$ infrastructure simulates a real-world transit hub, featuring multiple platforms, ticketing areas, and entrances/exits. The simulation is developed based on $PedestrianDynamic$.
 
-In each scenario, the agent generator generates a group of p
-eople at each time interval. The number of people in this group follows a uniform distribution $U(2,5)$, meaning that 2 to 5 people will be in this group. The time interval is a random variable following an exponential distribution, such that the arrival of the passenger groups follows a Poisson distribution. We set the mean interval $s=2$ for the rush hour condition, which means that on average every 2 seconds a group of passengers would arrive at the station. For off-peak hours, we set $s=4$. The demand for each train line is described by the probability that passengers will take that line. We categorize demand levels as high, normal, and low for a specific train line. For example, the demand distributions for line 1 are: high: $[52\%, 16\%, 16\%, 16\%]$, normal: $[25\%, 25\%, 25\%, 25\%]$, and low: $[10\%, 30\%, 30\%, 30\%]$.
+In each scenario, the agent generator generates a group of people at each time interval. The number of people in this group follows a uniform distribution $U(2,5)$, meaning that 2 to 5 people will be in this group. The time interval is a random variable following an exponential distribution, such that the arrival of the passenger groups follows a Poisson distribution. We set the mean interval $s=2$ for the rush hour condition, which means that on average every 2 seconds a group of passengers would arrive at the station. For off-peak hours, we set $s=4$. The demand for each train line is described by the probability that passengers will take that line. We categorize demand levels as high, normal, and low for a specific train line. For example, the demand distributions for line 1 are: high: $[52\%, 16\%, 16\%, 16\%]$, normal: $[25\%, 25\%, 25\%, 25\%]$, and low: $[10\%, 30\%, 30\%, 30\%]$.
 
 The maximum walking speed follows the triangular distribution $Triangular(2, 1.5, 2.5)$ under high-throughput conditions, indicating that the lowest maximum walking speed is 1.5 m/s, the highest is 2.5 m/s, and the mean is 2 m/s. Under normal conditions, the maximum walking speed follows $Triangular(1.35, 0.8, 1.75)$.
 
