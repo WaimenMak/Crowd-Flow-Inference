@@ -33,8 +33,12 @@ def rho_risk(pred, target, timespan, rho):
 
 
     return L # shape:[N - timespan + 1, ...], the rest dimention remain the same
+
+
 def weighted_loss(L1, L2, gamma): # L1: rmse, L2: quantile
     return (1-gamma) * L1 + gamma * L2
+
+
 def weighted_average_loss(pred, target, rho, timespan, mode=0):
     """
     Calculate the weighted average loss, consider different distribution on different nodes.

@@ -81,3 +81,7 @@ The maximum walking speed follows the triangular distribution $Triangular(2, 1.5
 <div style="text-align: center;">
     <img src="asset/train3.png" alt="Alt text" width="350" height="200">
 </div>
+
+<div style="text-align: center;">
+    <img src="asset/network_structure.png" alt="Network Structure" width="350" height="200">
+</div>
