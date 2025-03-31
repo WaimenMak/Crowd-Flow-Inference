@@ -355,6 +355,9 @@ class Diffusion_Model(torch.nn.Module):
 
 
 if __name__ == '__main__': #network 3
+    """
+    Training the base model for online learning
+    """
     from torch.utils.data import DataLoader
     from lib.dataloader import FlowDataset
     from lib.utils import gen_data_dict, process_sensor_data, StandardScaler
@@ -366,22 +369,28 @@ if __name__ == '__main__': #network 3
     random.seed(1)
     df_dict = {}
     # Define path to parent directory containing subdirectories with CSV files
-    parent_dir = '../sc_sensor'
+    parent_dir = './sc_sensor'
 
     # out of distribution
     # dataset_name = "crossroad"
     # dataset_name = "train_station"
-    dataset_name = "maze"
+    # dataset_name = "maze"
+    dataset_name = "edinburgh"
     if dataset_name == "crossroad":
-        train_sc = ['sc_sensor/crossroad11']
-        test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
+        train_sc = ['./sc_sensor/crossroad11']
+        test_sc = ['./sc_sensor/crossroad1', './sc_sensor/crossroad11', './sc_sensor/crossroad13']
     elif dataset_name == "train_station":
-        train_sc = ['sc_sensor/train13']
-        test_sc = ['sc_sensor/train2']
+        # train_sc = ['./sc_sensor/train13']
+        train_sc = ['./sc_sensor/train1']
+        # train_sc = ['./sc_sensor/train2']
+        test_sc = ['./sc_sensor/train3']
     elif dataset_name == "maze":
-        train_sc = ['sc_sensor/maze20']
-        # train_sc = ['sc_sensor/maze2']
-        test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
+        train_sc = ['./sc_sensor/maze20']
+        # train_sc = ['./sc_sensor/maze2']
+        test_sc = ['./sc_sensor/maze13', './sc_sensor/maze4']
+    elif dataset_name == "edinburgh":
+        train_sc = ['26Aug']
+        test_sc = ['27Aug']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -389,16 +398,21 @@ if __name__ == '__main__': #network 3
 
     #seperate upstream and downstream
     if dataset_name == "maze":
-        with open("../sc_sensor/maze/flow_data.pkl", "rb") as f:
+        with open("./sc_sensor/maze/flow_data.pkl", "rb") as f:
+            data_dict = pickle.load(f)
+    elif dataset_name == "edinburgh":
+        with open("./sc_sensor/edinburgh/flow_data_edinburgh.pkl", "rb") as f:
             data_dict = pickle.load(f)
     else:
-        df_dict = process_sensor_data(parent_dir, df_dict)
+        df_dict = process_sensor_data(parent_dir, df_dict) # data_dict store crossroad and train_station data
         data_dict = gen_data_dict(df_dict)
         data_dict = seperate_up_down(data_dict)
 
     '''Has to >= 2'''
     pred_horizon = 7 # 3, 5
     lags = 5
+    if dataset_name == "edinburgh":
+        pred_horizon = 2 # one step ahead
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=lags,
@@ -501,6 +515,20 @@ if __name__ == '__main__': #network 3
                                                   43, 50, 43, 50, 43, 50, 50,
                                                   30, 50, 43, 30, 50, 43])
 
+    if dataset_name == "edinburgh":
+        src = np.array([0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5,
+                        6, 6, 6, 6, 6, 9, 9, 9, 9, 9, 11, 11, 11, 11, 11])
+
+        dst = np.array([2, 4, 7, 8, 10, 4, 7, 1, 8, 10, 7, 1, 8, 10, 2,
+                        4, 2, 10, 8, 1, 7, 1, 10, 2, 4, 2, 4, 7, 1, 8])
+
+        g = dgl.graph((src,dst))
+        src_dst = np.intersect1d(dst, src)
+        src_dst_id = np.where(np.isin(src, src_dst))[0]
+        g.edata['distance'] = torch.FloatTensor([12.5, 15.3, 8.2, 9.3, 12.5, 6, 11, 13, 13, 6.1,
+                                                 11, 14, 15.5, 5.7, 3, 9, 10.4, 11.7, 15, 7.5,
+                                                 15, 9.5, 8.5, 12.5, 16, 4.5, 10, 11.5, 11.5, 8.5])
+
 
 
     # train
@@ -584,18 +612,21 @@ if __name__ == '__main__': #network 3
     total_time = time.time() - start
 
     # for base model in online learning
-    # if dataset_name == "crossroad":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_cross_lags{lags}_hor{pred_horizon}.pth')
-    # if dataset_name == "train_station":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_train_lags{lags}_hor{pred_horizon}.pth')
-    # if dataset_name == "maze":
-    #     torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth')
+    if dataset_name == "crossroad":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_cross_lags{lags}_hor{pred_horizon}.pth')
+    elif dataset_name == "train_station":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_train_lags{lags}_hor{pred_horizon}.pth')
+    elif dataset_name == "maze":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth')
+    elif dataset_name == "edinburgh":
+        torch.save(model.state_dict(), f'./checkpoint/diffusion/diffusion_model_network4_edinburgh_lags{lags}_hor{pred_horizon}.pth')
 
 
 
     # for offline analysis
-    sc_name = train_sc[0].split('/')[1]
-    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}_{sc_name}.pth')
+    if dataset_name != "edinburgh":
+        sc_name = train_sc[0].split('/')[1]
+    torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_{dataset_name}_lags{lags}_hor{pred_horizon}_{sc_name}.pth')
 
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
