@@ -264,7 +264,7 @@ class Diffusion_Model(torch.nn.Module):
 
         self.g.update_all(self.message_func, self.reduce_func)
 
-        return self.g.ndata.pop('pred') # [num_edges, batch_size]
+        return self.g.ndata.pop('pred') # [num_nodes, batch_size]
 
     def pad_src_data(self, data):
         pred = []
@@ -413,6 +413,7 @@ if __name__ == '__main__': #network 3
     lags = 5
     if dataset_name == "edinburgh":
         pred_horizon = 2 # one step ahead
+        lags = 6
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=lags,
@@ -626,6 +627,8 @@ if __name__ == '__main__': #network 3
     # for offline analysis
     if dataset_name != "edinburgh":
         sc_name = train_sc[0].split('/')[1]
+    else:
+        sc_name = train_sc[0]
     torch.save(model.state_dict(), f'./checkpoint/diffusion/offline_diffusion_model_network4_{dataset_name}_lags{lags}_hor{pred_horizon}_{sc_name}.pth')
 
     # test
