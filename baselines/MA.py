@@ -37,7 +37,8 @@ if __name__ == '__main__':
     parent_dir = '../sc_sensor'
 
 
-    dataset_name = "maze"
+    # dataset_name = "maze"
+    dataset_name = "edinburgh"
     if dataset_name == "crossroad":
         train_sc = ['sc_sensor/crossroad2']
         test_sc = ['sc_sensor/crossroad1', 'sc_sensor/crossroad11', 'sc_sensor/crossroad13']
@@ -48,10 +49,16 @@ if __name__ == '__main__':
         train_sc = ['sc_sensor/maze0']
         # train_sc = ['sc_sensor/maze2']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
+    elif dataset_name == "edinburgh":
+        train_sc = ['26Aug']
+        test_sc = ['27Aug']
 
     # Load data
     if dataset_name == "maze":
         with open("../sc_sensor/maze/flow_data.pkl", "rb") as f:
+            data_dict = pickle.load(f)
+    elif dataset_name == "edinburgh":
+        with open("../sc_sensor/edinburgh/flow_data_edinburgh.pkl", "rb") as f:
             data_dict = pickle.load(f)
     else:
         df_dict = process_sensor_data(parent_dir, df_dict)
@@ -74,6 +81,10 @@ if __name__ == '__main__':
 
     pred_horizon = 7 # 3, 5
     lags = 5
+    if dataset_name == "edinburgh":
+        pred_horizon = 2
+        lags = 6
+
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
                                                                                  lags=lags,
@@ -98,14 +109,15 @@ if __name__ == '__main__':
 
     # src = np.array([0, 2])
     # dst = np.array([3, 1])
-    g_data = load_graphs('../graphs/graphs.bin')
+    g_data = load_graphs('../graphs/4graphs.bin')
     if dataset_name == "crossroad":
         g = g_data[0][0]
     elif dataset_name == "train_station":
         g = g_data[0][1]
     elif dataset_name == "maze":
         g = g_data[0][2]
-
+    elif dataset_name == "edinburgh":
+        g = g_data[0][3]
 
 
     # g = dgl.graph((src, dst))
