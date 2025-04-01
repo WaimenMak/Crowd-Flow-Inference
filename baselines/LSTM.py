@@ -42,7 +42,8 @@ if __name__ == '__main__':
     # out of distribution
     # dataset_name = "crossroad"
     # dataset_name = "train_station"
-    dataset_name = "maze"
+    # dataset_name = "maze"
+    dataset_name = "edinburgh"
     if dataset_name == "crossroad":
         train_sc = ['../sc_sensor/crossroad2']
         test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
@@ -52,6 +53,9 @@ if __name__ == '__main__':
     elif dataset_name == "maze":
         train_sc = ['sc_sensor/maze19']
         test_sc = ['sc_sensor/maze13', 'sc_sensor/maze4']
+    elif dataset_name == "edinburgh":
+        train_sc = ['26Aug']
+        test_sc = ['27Aug']
 
     # for sc in data_dict.keys():
     #     if sc not in train_sc:
@@ -63,6 +67,9 @@ if __name__ == '__main__':
     if dataset_name == "maze":
         with open("../sc_sensor/maze/flow_data.pkl", "rb") as f:
             data_dict = pickle.load(f)
+    elif dataset_name == "edinburgh":
+        with open("../sc_sensor/edinburgh/flow_data_edinburgh.pkl", "rb") as f:
+            data_dict = pickle.load(f)
     else:
         df_dict = process_sensor_data(parent_dir, df_dict)
         data_dict = gen_data_dict(df_dict)
@@ -70,6 +77,10 @@ if __name__ == '__main__':
 
     pred_horizon = 7 # 3, 5
     lags = 5
+    if dataset_name == "edinburgh":
+        pred_horizon = 2
+        lags = 6
+
     x_train, y_train, x_val, y_val, x_test, y_test = generating_ood_dataset(data_dict, train_sc, test_sc, lags=lags, horizons=pred_horizon, shuffle=True)
     # x_train, y_train, x_val, y_val, x_test, y_test = generating_insample_dataset(data_dict, train_sc,
     #                                                                              lags=lags,
@@ -77,13 +88,15 @@ if __name__ == '__main__':
     #                                                                              portion=0.7,
     #                                                                              shuffle=True)
 
-    g_data = load_graphs('../graphs/graphs.bin')
+    g_data = load_graphs('../graphs/4graphs.bin')
     if dataset_name == "crossroad":
         g = g_data[0][0]
     elif dataset_name == "train_station":
         g = g_data[0][1]
     elif dataset_name == "maze":
         g = g_data[0][2]
+    elif dataset_name == "edinburgh":
+        g = g_data[0][3]
 
     num_input_timesteps = x_train.shape[1] # number of input time steps
     num_nodes = x_train.shape[2] # number of ancestor nodes, minus the down stream node
@@ -107,7 +120,8 @@ if __name__ == '__main__':
     dst_idx = dst.unique()
     g = dgl.add_self_loop(g)
 
-    for epoch in range(1500):
+    # for epoch in range(1500):
+    for epoch in range(300):
         l = []
         for i, (x, y) in enumerate(train_dataloader):
             # x = x.permute(1, 2, 0)
@@ -125,10 +139,12 @@ if __name__ == '__main__':
 
     if dataset_name == "crossroad":
         torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_crossroad_lags{lags}_hor{pred_horizon}.pth')
-    if dataset_name == "train_station":
+    elif dataset_name == "train_station":
         torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_trainstation_lags{lags}_hor{pred_horizon}.pth')
-    if dataset_name == "maze":
+    elif dataset_name == "maze":
         torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_maze_lags{lags}_hor{pred_horizon}.pth')
+    elif dataset_name == "edinburgh":
+        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_edinburgh_lags{lags}_hor{pred_horizon}.pth')
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
     test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
