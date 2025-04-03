@@ -152,6 +152,8 @@ class OnlineDiffusionPlus(BaseLearner):
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_cross_lags{lags}_hor{pred_horizon}.pth"))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_maze_lags{lags}_hor{pred_horizon}.pth"))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network5_edinburgh_lags{lags}_hor{pred_horizon}.pth"))
 
         # base weights of the model
         # self.base_parmas = [param.clone().detach() for param in self.model.velocity_model.parameters()]
@@ -284,6 +286,8 @@ class OnlineDiffusion(BaseLearner):
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network4_cross_lags{lags}_hor{pred_horizon}.pth"))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network4_maze_lags{lags}_hor{pred_horizon}.pth"))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_model_network4_edinburgh_lags{lags}_hor{pred_horizon}.pth"))
 
         self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},  # 0.001 -> 0.005
                                                        {'params': [self.model.alpha], 'lr': 0.001, 'weight_decay': 1e-5}])
@@ -437,6 +441,8 @@ class OnlineDiffusionUq(BaseLearner):
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_uq4_cross_lags{lags}_hor{pred_horizon}.pth"))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_uq4_maze_lags{lags}_hor{pred_horizon}.pth"))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f"./checkpoint/diffusion/diffusion_uq4_edinburgh_lags{lags}_hor{pred_horizon}.pth"))
 
         self.model.src_dst_id = self.src_dst_id
         self.optimizer = torch.optim.Adam([{'params': self.model.velocity_model.parameters(), 'lr': 0.001, 'weight_decay': 1e-5},
@@ -639,6 +645,9 @@ class OnlineGcn(BaseLearner):
             self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcn_crossroad_lags{lags}_hor{pred_horizon}.pth'))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcn_maze_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcn_edinburgh_lags{lags}_hor{pred_horizon}.pth'))
+
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-5)
         self.loss_fn = torch.nn.MSELoss()
         self.chunk_size = chunk_size
@@ -723,6 +732,9 @@ class OnlineGcnlstm(BaseLearner):
             self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_crossroad_lags{lags}_hor{pred_horizon}.pth'))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_maze_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_edinburgh_lags{lags}_hor{pred_horizon}.pth'))
+
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-5)
         self.loss_fn = torch.nn.MSELoss()
         self.chunk_size = chunk_size
@@ -794,6 +806,8 @@ class OnlineGat(BaseLearner):
             self.model.load_state_dict(torch.load(f'./checkpoint/gat/gat_crossroad_lags{lags}_hor{pred_horizon}.pth'))
         elif dataset == "maze":
             self.model.load_state_dict(torch.load(f'./checkpoint/gat/gat_maze_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gat/gat_edinburgh_lags{lags}_hor{pred_horizon}.pth'))
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-5)
         self.loss_fn = torch.nn.MSELoss()
