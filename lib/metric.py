@@ -47,14 +47,18 @@ def weighted_average_loss(pred, target, rho, timespan, mode=0):
     """
     min_gamma = 0 # 0.5
     max_gamma = 1 # 0.9
-    Q_z = np.quantile(target, q=rho, axis=(0, 2)) # overall 90% quantile of all node, [step, feature]
-    Q_znode = np.quantile(target, q=rho, axis=0) # node 90% quantile [step, node, feature]
-    diff = Q_znode.transpose([1, 0, 2]) - Q_z     # [node, step, feature]
-    gamma = (diff - np.min(diff, axis=0))/(np.max(diff, axis=0) - np.min(diff, axis=0))  #[0~1]
+    # Q_z = np.quantile(target, q=rho, axis=(0, 2)) # overall 90% quantile of all node, [step, feature]
+    Q_z = np.quantile(target, q=0.95, axis=(0, 1)) # Q_z: [steps], target: [num_samples, node, steps]
+    # Q_znode = np.quantile(target, q=rho, axis=0)
+    Q_znode = np.quantile(target, q=0.95, axis=0) # Q_znode: [node, steps]
+    # diff = Q_znode.transpose([1, 0, 2]) - Q_z
+    diff = Q_znode - Q_z  # [node, steps]
+    gamma = (diff - np.min(diff, axis=0))/(np.max(diff, axis=0) - np.min(diff, axis=0))  #[0~1], [node, steps]
     gamma = min_gamma + gamma * (max_gamma - min_gamma)
     # gamma[gamma<=0.5] = 0.5  # [node, step, feature]
     # gamma[gamma>0.8] = 0.8
-    gamma = gamma.transpose(1, 0, 2)
+    # gamma = gamma.transpose(1, 0, 2)
+    # print(gamma.shape)
     if mode == 1:
         #rmse
         loss = np.sqrt(np.mean((pred - target)**2, axis=0)) # [step, node, feature]
@@ -62,12 +66,14 @@ def weighted_average_loss(pred, target, rho, timespan, mode=0):
         #mae
         loss = np.mean(np.abs(pred - target), axis=0) # [step, node, feature]
     rhorisk = rho_risk(pred, target, timespan=timespan, rho=rho)
+    # print(rhorisk.shape)
     qt = np.mean(rhorisk, axis=0)  # [step, node, feature]
     wt = weighted_loss(loss, qt, gamma=gamma) # [step, node, feature]
     # print(wt.shape)
     loss = np.mean(wt)
 
-    return loss, wt, gamma,
+    return loss, wt, gamma
+
 def quantile_loss_np(pred, target, rho):
     Z_hat = np.sum(pred, axis=1)  # sum on steps, to get the Z and Z_hat
     Z = np.sum(target, axis=1)  # [Time, 1]
