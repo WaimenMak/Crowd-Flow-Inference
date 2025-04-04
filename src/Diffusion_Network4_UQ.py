@@ -422,62 +422,6 @@ if __name__ == '__main__': #network 3
     x_scalar = StandardScaler(mean=np.concatenate([x_train, x_val]).mean(),
                               std=np.concatenate([x_train, x_val]).std())
 
-
-    # if dataset_name == "crossroad":
-    #     src = np.array([0, 0, 0, 3, 3, 3, 5, 5, 5, 6, 6, 6])
-    #     dst = np.array([4, 2, 7, 1, 4, 7, 2, 7, 1, 2, 4, 1])
-    #     src_dst = np.intersect1d(dst, src)
-    #     src_dst_id = np.where(np.isin(src, src_dst))[0]
-    #     g = dgl.graph((src, dst))
-    #     g.edata['distance'] = torch.FloatTensor([43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43]) # 50m
-    #
-    # if dataset_name == "train_station":
-    #     src = np.array([3,3,3,
-    #                     4,4,4,
-    #                     7,7,7,
-    #                     22,22,22,
-    #                     23,23,23,23,23,
-    #                     8,8,8,8,8,
-    #                     11, 11, 11, 11, 11,
-    #                     14, 14, 14, 14, 14,
-    #                     18, 18, 18,
-    #                     17, 17, 17, 17, 17,
-    #                     13, 13, 13,
-    #                     21, 21, 21,
-    #                     0, 0, 0,
-    #                     12, 12, 12, 12, 12])
-    #     dst = np.array([5,6,23,
-    #                     2,6,23,
-    #                     2,5,23,
-    #                     2,5,6,
-    #                     9,10,15,16,13,
-    #                     22,10,13,15,16,
-    #                     22,9,15,16,13,
-    #                     22,9,10,16,13,
-    #                     12,1,20,
-    #                     13,15,9,10,22,
-    #                     20,1,19,
-    #                     19,1,12,
-    #                     12,19,20,
-    #                     15,16,9,10,22])
-    #     g = dgl.graph((src, dst))
-    #     src_dst = np.intersect1d(dst, src)
-    #     src_dst_id = np.where(np.isin(src, src_dst))[0]
-    #     g.edata['distance'] = torch.FloatTensor([40,40,28, # 3
-    #                                              40,50,32, # 4
-    #                                              40,50,32,
-    #                                              28,32,32,
-    #                                              24,24,41,41,35,
-    #                                              24,50,49,54,65,
-    #                                              24,50,65,54,49,
-    #                                              41,54,65,50,32,
-    #                                              25,47,50,
-    #                                              32,50,65,54,41,
-    #                                              25,32,25,
-    #                                              50,47,25,
-    #                                              32,47,47,
-    #                                              32,32,49,49,35])
-
     g_data = load_graphs('../graphs/graphs.bin')
     if dataset_name == "crossroad":
         g = g_data[0][0]
@@ -542,7 +486,7 @@ if __name__ == '__main__': #network 3
                 pred = model(g.ndata['feature'][src], g.ndata['feature'][dst])
                 alpha = g.ndata['sigma']
                 '''single step'''
-                nll_loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], alpha[dst_idx]) # negative binomial loss
+                nll_loss = loss_fn(pred[dst_idx], g.ndata['label'][dst_idx,:, 0], alpha[dst_idx]) # negative binomial loss, alpha [num_nodes, batch_size]
                 '''multi steps'''
                 if pred_horizon - 1 > 1 and epoch > 50:
                     _, multi_steps_pred = model.inference(g.ndata['feature'][src], g.ndata['feature'][dst])
