@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# @Time    : 26/01/2024 16:37
+# @Time    : 02/04/2025 16:01
 # @Author  : mmai
-# @FileName: LSTM
+# @FileName: LSTM_UQ
 # @Software: PyCharm
 
 import torch
@@ -9,17 +9,24 @@ import dgl.function as fn
 import torch.nn as nn
 import torch.nn.functional as F
 import dgl.nn as dglnn
+from src.Diffusion_Network4_UQ import NegativeBinomialDistributionLoss
 
-class SimpleLSTM(nn.Module):
+class SimpleLSTM_UQ(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, num_nodes):
         super().__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, dropout=0.5, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size * num_nodes)
+        self.sigma_fc = nn.ModuleList([nn.Linear(hidden_size, 32), nn.LayerNorm(32),
+                                       nn.ReLU(), nn.Linear(32, num_nodes)]) # for the parameter of the negative binomial distribution, for each node
 
     def forward(self, x):
         lstm_out, _ = self.lstm(x)
         output = self.fc(lstm_out[:, -1, :])  # Use the output from the last time step
-        return output
+        inpt = lstm_out[:, -1, :]
+        for layer in self.sigma_fc:
+            inpt = layer(inpt)
+        sigma = torch.log(1 + torch.exp(inpt.squeeze())) # [batch_size, num_nodes]
+        return output, sigma
 
 if __name__ == '__main__':
     from lib.utils import gen_data_dict, process_sensor_data, StandardScaler
@@ -41,9 +48,9 @@ if __name__ == '__main__':
 
     # out of distribution
     # dataset_name = "crossroad"
-    # dataset_name = "train_station"
+    dataset_name = "train_station"
     # dataset_name = "maze"
-    dataset_name = "edinburgh"
+    # dataset_name = "edinburgh"
     if dataset_name == "crossroad":
         train_sc = ['../sc_sensor/crossroad2']
         test_sc = ['../sc_sensor/crossroad1', '../sc_sensor/crossroad11', '../sc_sensor/crossroad13']
@@ -111,9 +118,10 @@ if __name__ == '__main__':
     #                           std=np.concatenate([x_train, x_val]).std())
 
     # train
-    model = SimpleLSTM(input_size=num_nodes, hidden_size=64, output_size=pred_horizon-1, num_layers=2, num_nodes=num_nodes)  # out_size: prediction horizon
+    model = SimpleLSTM_UQ(input_size=num_nodes, hidden_size=64, output_size=pred_horizon-1, num_layers=2, num_nodes=num_nodes)  # out_size: prediction horizon
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = torch.nn.MSELoss()
+    nll_loss_fn = NegativeBinomialDistributionLoss()
 
     src, dst = g.edges()
     src_idx = src.unique()
@@ -126,9 +134,14 @@ if __name__ == '__main__':
         for i, (x, y) in enumerate(train_dataloader):
             # x = x.permute(1, 2, 0)
             # y = y.permute(1, 2, 0).reshape(y.shape[1], -1)
+            first_step = y[:, 0, :]
             y = y.reshape(y.shape[0], -1)
-            pred = model(x)
-            loss = loss_fn(pred, y)
+            pred, sigma = model(x)
+            pred_first_step = pred.reshape(pred.shape[0], pred_horizon-1, num_nodes)[:, 0, :] # [batch_size, num_nodes]
+            mse = loss_fn(pred, y)
+            nll_loss = nll_loss_fn(pred_first_step[:, dst_idx].clamp(min=0), first_step[:, dst_idx], sigma[:, dst_idx]) # input size should be [num_nodes, batch_size] or [batch_size, num_nodes]
+            # nll_loss = nll_loss_fn(pred_first_step.clamp(min=0), first_step, sigma)
+            loss = mse + nll_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -138,13 +151,13 @@ if __name__ == '__main__':
             print('Epoch: {}, Loss: {}'.format(epoch, np.mean(l)))
 
     if dataset_name == "crossroad":
-        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_crossroad_lags{lags}_hor{pred_horizon}.pth')
+        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_uq_crossroad_lags{lags}_hor{pred_horizon}.pth')
     elif dataset_name == "train_station":
-        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_trainstation_lags{lags}_hor{pred_horizon}.pth')
+        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_uq_trainstation_lags{lags}_hor{pred_horizon}.pth')
     elif dataset_name == "maze":
-        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_maze_lags{lags}_hor{pred_horizon}.pth')
+        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_uq_maze_lags{lags}_hor{pred_horizon}.pth')
     elif dataset_name == "edinburgh":
-        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_edinburgh_lags{lags}_hor{pred_horizon}.pth')
+        torch.save(model.state_dict(), f'../checkpoint/lstm/lstm_uq_edinburgh_lags{lags}_hor{pred_horizon}.pth')
     # test
     test_dataset = FlowDataset(x_test, y_test, batch_size=y_test.shape[0])
     test_dataloader = DataLoader(test_dataset, batch_size=y_test.shape[0])
@@ -164,7 +177,7 @@ if __name__ == '__main__':
             # pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
             # x = x.permute(1, 2, 0)
             y = y.reshape(y.shape[0], -1)
-            pred = model(x)
+            pred, sigma = model(x)
             pred = pred.reshape(pred.shape[0], pred_horizon-1, num_nodes).permute(2, 0, 1)
             loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             train_loss.append(loss.item())
@@ -190,7 +203,7 @@ if __name__ == '__main__':
             # pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
             # x = x.permute(1, 2, 0)
             y = y.reshape(y.shape[0], -1)
-            pred = model(x)
+            pred, sigma = model(x)
             pred = pred.reshape(pred.shape[0], pred_horizon-1, num_nodes).permute(2, 0, 1)
             loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             test_loss.append(loss.item())
