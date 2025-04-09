@@ -101,8 +101,9 @@ class TestThenTrainEnv:
                 v_list, alpha_list, F_list, e_list, route_flow, route_speed, compute_time)
 
 if __name__ == '__main__':
-    from test_then_train.Online_Models import (OnlineDiffusion, OnlineMa, ELM, OnlineGcn, OnlineGat, OnlineLstm, OnlineGcnlstm,
-                               OnlineDiffusionUq, OnlineXgboost, SingleModel, OnlineLstmSingle, OnlineDiffusionPlus)
+    # from test_then_train.Online_Models import (OnlineDiffusion, OnlineMa, ELM, OnlineGcn, OnlineGat, OnlineLstm, OnlineGcnlstm,
+    #                            OnlineDiffusionUq, OnlineXgboost, SingleModel, OnlineLstmSingle, OnlineDiffusionPlus, OnlineLstmUq, OnlineGcnlstmUq)
+    from test_then_train.Online_Models import SingleModel
     from lib.utils import gen_data_dict, process_sensor_data, StandardScaler
     from lib.utils import seperate_up_down
     from dgl.data.utils import load_graphs
@@ -122,12 +123,12 @@ if __name__ == '__main__':
 
     import argparse
     parser = argparse.ArgumentParser(description='Description of your script')
-    parser.add_argument('--dataset', type=str, default='maze', help='Dataset name')
+    parser.add_argument('--dataset', type=str, default='train_station', help='Dataset name')
     parser.add_argument('--lags', type=int, default=5, help='Number of lags')
     parser.add_argument('--pred_horizons', type=int, default=7, help='Prediction horizons')
     parser.add_argument('--chunk_size', type=int, default=30, help='Chunk size')
     parser.add_argument('--train_steps', type=int, default=200, help='Training iterations for each chunk')
-    parser.add_argument('--model_type', type=str, default='Online_Diffusion_plus', help='Type of model')
+    parser.add_argument('--model_type', type=str, default='Online_GCNLSTM_UQ', help='Type of model')
     parser.add_argument('--no-buffer', dest='buffer', action='store_false',
                         help='Whether not to use buffer')
     parser.add_argument('--no-save', dest='save', action='store_false',
@@ -194,9 +195,17 @@ if __name__ == '__main__':
         outbound_node = [2, 1, 19, 21, 15, 12, 8, 6]
         node_of_interest = outbound_node + [4, 5, 22, 23, 16, 17, 11, 10]
 
+    if dataset_name == "edinburgh":
+        test_sc = ['24Aug', '25Aug', '27Aug', '28Aug', '29Aug', '01Sep', '02Sep', '04Sep', '05Sep', '10Sep', '11Sep']
+        inbound_node = [0, 9, 11, 3, 5, 6]
+        outbound_node = [1, 10, 8, 4, 7, 2]
+        node_of_interest = outbound_node
 
     if dataset_name == "maze":
         with open("sc_sensor/maze/flow_data.pkl", "rb") as f:
+            data_dict = pickle.load(f)
+    elif dataset_name == "edinburgh":
+        with open("sc_sensor/edinburgh/flow_data_edinburgh.pkl", "rb") as f:
             data_dict = pickle.load(f)
     else:
         df_dict = process_sensor_data(parent_dir, df_dict)
@@ -207,13 +216,15 @@ if __name__ == '__main__':
     '''Has to >= 2'''
     pred_horizon = args.pred_horizons # 3, 5
 
-    g_data = load_graphs('graphs/graphs.bin')
+    g_data = load_graphs('graphs/4graphs.bin')
     if dataset_name == "crossroad":
         g = g_data[0][0]
     elif dataset_name == "train_station":
         g = g_data[0][1]
     elif dataset_name == "maze":
         g = g_data[0][2]
+    elif dataset_name == "edinburgh":
+        g = g_data[0][3]
 
     g = g.to(device)
     chunk_size = args.chunk_size
@@ -223,33 +234,51 @@ if __name__ == '__main__':
     test_env.device = device
 
     if args.model_type == 'Online_LSTM_Single':
+        from test_then_train.Online_Models import OnlineLstmSingle
         model = SingleModel(model_type=OnlineLstmSingle, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=32,
                             chunk_size=chunk_size, num_layers=2, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_LSTM':
+        from test_then_train.Online_Models import OnlineLstm
         model = SingleModel(model_type=OnlineLstm, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=64,
                             chunk_size=chunk_size, num_layers=2, train_steps=args.train_steps, buffer=args.buffer)
+    elif args.model_type == 'Online_LSTM_UQ':
+        from test_then_train.Online_Models import OnlineLstmUq
+        model = SingleModel(model_type=OnlineLstmUq, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=64,
+                            chunk_size=chunk_size, num_layers=2, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_GCN':
+        from test_then_train.Online_Models import OnlineGcn
         model = SingleModel(model_type=OnlineGcn, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=128,
                             chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_GCNLSTM':
+        from test_then_train.Online_Models import OnlineGcnlstm
         model = SingleModel(model_type=OnlineGcnlstm, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=32, num_layers=2,
                             chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
+    elif args.model_type == 'Online_GCNLSTM_UQ':
+        from test_then_train.Online_Models import OnlineGcnlstmUq
+        model = SingleModel(model_type=OnlineGcnlstmUq, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=32, num_layers=2,
+                            chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_GAT':
+        from test_then_train.Online_Models import OnlineGat
         model = SingleModel(model_type=OnlineGat, dataset=dataset_name, g=g, hidden_units=32, pred_horizon=pred_horizon,
                             lags=lags, device=device, num_heads=3, train_steps=args.train_steps, chunk_size=chunk_size, buffer=args.buffer)
     elif args.model_type == 'Online_Diffusion':
+        from test_then_train.Online_Models import OnlineDiffusion
         model = SingleModel(model_type=OnlineDiffusion, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device,
                             chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_Diffusion_plus':
+        from test_then_train.Online_Models import OnlineDiffusionPlus
         model = SingleModel(model_type=OnlineDiffusionPlus, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device,
                             chunk_size=chunk_size, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_Diffusion_UQ':
+        from test_then_train.Online_Models import OnlineDiffusionUq
         model = SingleModel(model_type=OnlineDiffusionUq, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device,
                             train_steps=args.train_steps, chunk_size=chunk_size, buffer=args.buffer)
     elif args.model_type == 'Online_Xgboost':
+        from test_then_train.Online_Models import OnlineXgboost
         model = SingleModel(model_type=OnlineXgboost, g=g, dataset=dataset_name, pred_horizon=pred_horizon,
                             lags=lags, device=device, chunk_size=chunk_size, train_steps=None, buffer=False)
     elif args.model_type == 'Online_MA':
+        from test_then_train.Online_Models import OnlineMa
         model = SingleModel(model_type=OnlineMa, g=g, pred_horizon=pred_horizon, lags=lags, device=device,
                             chunk_size=chunk_size, train_steps=None)
     # model = Single_Model(model_type=Online_MA, g=g, pred_horizon=pred_horizon, lags=lags, device=device, train_steps=None)
@@ -300,11 +329,16 @@ if __name__ == '__main__':
             pickle.dump(route_speed, open(f'checkpoint/{args.model_type}_{dataset_name}_route_speed_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.pkl', 'wb'))
 
             # save the model
+            # torch.save(model.model.model.state_dict(),
+            #            f"./checkpoint/diffusion/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+
+        #not in use code
+        elif args.model_type == 'Online_LSTM_UQ':
             torch.save(model.model.model.state_dict(),
-                       f"./checkpoint/diffusion/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
-        # elif args.model_type == 'Online_LSTM':
-        #     torch.save(model.model.model.state_dict(),
-        #                f"./checkpoint/lstm/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+                       f"./checkpoint/lstm/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+        elif args.model_type == 'Online_GCNLSTM_UQ':
+            torch.save(model.model.model.state_dict(),
+                       f"./checkpoint/gcn/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
         # elif args.model_type == 'Online_GCN':
         #     torch.save(model.model.model.state_dict(),
         #                f"./checkpoint/gcn/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
