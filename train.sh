@@ -32,6 +32,9 @@
 #
 #python Online_Update.py --model_type="Online_Diffusion" --lags=5 --chunk_size=30 --pred_horizons=7 --train_steps=200 --dataset=train_station
 
+#python Online_Update.py --model_type="Online_Diffusion" --lags=6 --chunk_size=30 --pred_horizons=2 --train_steps=200 --dataset=edinburgh
+
+
 
 # vary the chunk size
 clear

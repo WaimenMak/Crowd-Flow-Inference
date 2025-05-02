@@ -12,8 +12,12 @@ from src.Diffusion_Network4_UQ import NegativeBinomialDistributionLoss, Diffusio
 from baselines.MA import Moving_Average
 from baselines.GCN import GCNRegressor
 from baselines.GCN_LSTM import GCN_LSTMRegressor
+from baselines.GCN_LSTM_UQ import GCN_LSTM_UQ
+from baselines.DeepAR import DeepAR
 from baselines.GAT import GAT
 from baselines.LSTM import SimpleLSTM
+from baselines.LSTM_UQ import SimpleLSTM_UQ
+from src.Diffusion_Network4_UQ import NegativeBinomialDistributionLoss
 
 import torch
 from collections import deque
@@ -361,8 +365,8 @@ class OnlineDiffusion(BaseLearner):
             # self.g.ndata['feature'] = torch.cat(x, dim=1)
             # self.g.ndata['label'] = torch.cat(y, dim=1)
 
-            # if iteration < self.train_steps / 2:
-            if iteration < 0:
+            if iteration < self.train_steps / 2:
+            # if iteration < 0:
                 pred = self.model(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst]) # [num_dst, batch_size]
                 loss = self.loss_fn(pred[self.dst_idx], self.g.ndata['label'][self.dst_idx,:, 0]) # [num_dst, batch_size], one-step prediction
                 # weighted loss
@@ -385,7 +389,8 @@ class OnlineDiffusion(BaseLearner):
                 # loss = self.loss_fn(multi_steps_pred[self.dst_idx, :, :self.task_level], self.g.ndata['label'][self.dst_idx, :, :self.task_level])
                 # if (iteration+1) % self.step_size == 0 and self.task_level <= self.pred_horizon:
                 #     self.task_level += 1
-            if (iteration) % 5 == 0:
+            # if (iteration) % 5 == 0:
+            if iteration % 10 == 0:
                 if self.eval(eval_x, eval_y): break
                 # pass
             self.optimizer.zero_grad()
@@ -451,6 +456,7 @@ class OnlineDiffusionUq(BaseLearner):
         self.loss_fn = NegativeBinomialDistributionLoss()
         self.loss_fn_mse = torch.nn.MSELoss()
         self.chunk_size = chunk_size
+        self.sigma_list = [] # record sigma for each step
         if self.buffer:
             # self.batch_size = self.chunk_size
             self.batch_size = 10
@@ -547,6 +553,7 @@ class OnlineDiffusionUq(BaseLearner):
     def inference(self, observation):
         self.g.ndata['feature'] = observation # [node, batch_size, num_timesteps_input]
         pred, multistep_pred = self.model.inference(self.g.ndata['feature'][self.src], self.g.ndata['feature'][self.dst])
+        self.sigma_list.append(self.g.ndata['sigma'].T)
         return multistep_pred
 
 
@@ -779,6 +786,11 @@ class OnlineGcnlstm(BaseLearner):
                 pred = self.model.inference(self.g, torch.stack(x, dim=1))
                 label = torch.stack(y, dim=1)
 
+            # if iter % 10 == 0:
+            #     self.model.eval()
+            #     if self.eval(eval_x, eval_y): break
+            #     self.model.train()
+                
             loss = self.loss_fn(pred[self.dst_idx, :, :], label[self.dst_idx, :, :])
             self.optimizer.zero_grad()
             loss.backward()
@@ -790,6 +802,94 @@ class OnlineGcnlstm(BaseLearner):
     def inference(self, observation):
         pred = self.model.inference(self.g, observation)
         return pred
+
+class OnlineGcnlstmUq(BaseLearner):
+    def __init__(self, dataset, pred_horizon, lags, g, device, hidden_units, num_layers, train_steps, chunk_size, buffer):
+        super().__init__(pred_horizon, lags, g, device, train_steps, buffer, chunk_size)
+        self.g = dgl.add_self_loop(g)
+        self.model = GCN_LSTM_UQ(in_feats=self.lags+1, h_feats=hidden_units, out_feats=pred_horizon-1, lstm_hidden_size=32, num_layers=num_layers, g=self.g)
+        if dataset == "train_station":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_uq_trainstation_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "crossroad":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_uq_crossroad_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "maze":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_uq_maze_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/gcn/gcnlstm_uq_edinburgh_lags{lags}_hor{pred_horizon}.pth'))
+
+        self.name = "Online_GCNLSTM_UQ"
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-5)
+        self.loss_fn = torch.nn.MSELoss()
+        self.nll_loss_fn = NegativeBinomialDistributionLoss()
+        self.chunk_size = chunk_size
+        self.sigma_list = [] # record sigma for each step
+
+        if self.buffer:
+            self.batch_size = 30
+            self.data_capacity = 2000
+        else:
+            self.data_capacity = self.chunk_size
+        self.data_buffer = replay_buffer(self.data_capacity)
+
+    def eval(self, eval_x, eval_y):
+        # early stopping
+        self.g.ndata['feature'] = eval_x
+        self.g.ndata['label'] = eval_y
+
+        pred, sigma = self.model.inference(self.g, eval_x)
+        eval_loss = self.nll_loss_fn(pred[self.dst_idx, :, 0].clamp(min=0), eval_y[self.dst_idx, :, 0], sigma[:, self.dst_idx].T)
+        # eval_loss = self.loss_fn(pred[self.dst_idx, :, :].detach(), eval_y[self.dst_idx, :, :])
+
+        return self.early_stopper.early_stop(eval_loss)
+    
+    def learn(self, observation, label):
+        self.model.train()
+        self.g.ndata['feature'] = observation
+        self.g.ndata['label'] = label # [node, batch_size, pred_horizon]
+        train_x = observation[:, :self.train_portion, :]
+        train_y = label[:, :self.train_portion, :]
+        eval_x = observation[:, self.train_portion:, :]
+        eval_y = label[:, self.train_portion:, :]
+        for s in range(observation.shape[1]):
+            self.data_buffer.add(observation[:, s, :], label[:, s, :])
+        for iter in range(self.iters):
+            if iter == 0:
+                x, y = train_x, train_y
+                pred, sigma = self.model(self.g, x)
+                label = y
+            else:
+                try:
+                    x, y = self.data_buffer.sample(self.batch_size)
+                except:
+                    x, y = self.data_buffer.sample(len(self.data_buffer))
+
+                pred, sigma = self.model(self.g, torch.stack(x, dim=1))
+                label = torch.stack(y, dim=1)
+
+            if (iter+1) % 10 == 0:
+                self.model.eval()
+                if self.eval(eval_x, eval_y): break
+                self.model.train()
+
+            loss = self.loss_fn(pred[self.dst_idx, :, :], label[self.dst_idx, :, :])
+            first_step_label = label[self.dst_idx, :, 0]
+            first_step_pred = pred[self.dst_idx, :, 0]
+            nll_loss = self.nll_loss_fn(first_step_pred.clamp(min=0), first_step_label, sigma[:, self.dst_idx].T)
+            loss = loss + nll_loss
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        
+    def inference(self, observation):
+        self.model.eval()
+        pred, sigma = self.model(self.g, observation)
+        self.sigma_list.append(sigma)
+        return pred
+
+                                    
+        
+
 
 class OnlineGat(BaseLearner):
     def __init__(self, dataset, pred_horizon, lags, g, device, hidden_units, num_heads, train_steps, chunk_size, buffer):
@@ -910,6 +1010,7 @@ class OnlineLstm(BaseLearner):
         return self.early_stopper.early_stop(eval_loss)
 
     def learn(self, observation, label):
+        self.model.train()
         train_x = observation[:, :self.train_portion, :]
         train_y = label[:, :self.train_portion, :]
         eval_x = observation[:, self.train_portion:, :]
@@ -956,6 +1057,165 @@ class OnlineLstm(BaseLearner):
         self.model.eval()
         observation = observation.permute(1, 2, 0)
         pred = self.model(observation)
+        return pred.reshape([-1, self.pred_horizon, self.num_nodes]).permute(2, 0, 1)
+
+
+class OnlineLstmUq(BaseLearner):
+    def __init__(self, chunk_size, dataset, pred_horizon, lags, g, device, hidden_units, num_layers, train_steps, buffer):
+        super().__init__(pred_horizon, lags, g, device, train_steps, buffer, chunk_size)
+        self.model = SimpleLSTM_UQ(input_size=self.num_nodes, hidden_size=hidden_units,
+                                output_size=self.pred_horizon, num_layers=num_layers, num_nodes=self.num_nodes)
+        if dataset == "train_station":
+            self.model.load_state_dict(torch.load(f'./checkpoint/lstm/lstm_uq_trainstation_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "crossroad":
+            self.model.load_state_dict(torch.load(f'./checkpoint/lstm/lstm_uq_crossroad_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "maze":
+            self.model.load_state_dict(torch.load(f'./checkpoint/lstm/lstm_uq_maze_lags{lags}_hor{pred_horizon}.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/lstm/lstm_uq_edinburgh_lags{lags}_hor{pred_horizon}.pth'))
+
+        self.name = "Online_LSTM_UQ"
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-5)
+        self.mse_loss_fn = torch.nn.MSELoss()
+        self.nll_loss_fn = NegativeBinomialDistributionLoss()
+        self.chunk_size = chunk_size
+        self.sigma_list = [] # record sigma for each step
+        if self.buffer:
+            self.batch_size = 30
+            self.data_capacity = 1500
+        else:
+            self.data_capacity = self.chunk_size
+        self.data_buffer = replay_buffer(self.data_capacity)
+
+    def eval(self, eval_x, eval_y):
+        eval_x = eval_x.permute(1, 2, 0)
+        pred, sigma = self.model(eval_x)
+        pred = pred.reshape(pred.shape[0], self.pred_horizon, self.num_nodes).permute(2, 0, 1)
+        # eval_loss = self.mse_loss_fn(pred[self.dst_idx, :, :], eval_y[self.dst_idx, :, :])
+        eval_loss = self.nll_loss_fn(pred[self.dst_idx, :, 0].clamp(min=0), eval_y[self.dst_idx, :, 0], sigma[:, self.dst_idx].T)
+        return self.early_stopper.early_stop(eval_loss)
+
+    def learn(self, observation, label):
+        self.model.train()
+        train_x = observation[:, :self.train_portion, :]
+        train_y = label[:, :self.train_portion, :]
+        eval_x = observation[:, self.train_portion:, :]
+        eval_y = label[:, self.train_portion:, :]
+        train_x = train_x.permute(1, 2, 0) # [batch_size, num_time_steps, num_nodes]
+        train_y = train_y.permute(1, 2, 0).reshape(train_y.shape[1], -1) # [batch_size, 1, num_nodes * pred_horizon]
+        observation = observation.permute(1, 2, 0) # [batch_size, num_time_steps, num_nodes]
+        label = label.permute(1, 2, 0).reshape(label.shape[1], -1) # [batch_size, pred_horizon, num_nodes]
+        for s in range(observation.shape[0]):
+            self.data_buffer.add(observation[s, :, :], label[s, :])
+
+        for iter in range(self.iters):
+            if iter == 0:
+                x, y = [train_x], [train_y]
+                pred, sigma = self.model(torch.cat(x, dim=0))
+                label = torch.cat(y, dim=0)
+            else:
+                x, y = self.data_buffer.sample(self.batch_size)
+                pred, sigma = self.model(torch.stack(x, dim=0))
+                label = torch.stack(y, dim=0)
+
+            mse = self.mse_loss_fn(pred, label)
+            label = label.reshape(label.shape[0], self.pred_horizon, self.num_nodes)
+            first_step = label[:, 0, :]
+            pred_first_step = pred.reshape(pred.shape[0], self.pred_horizon, self.num_nodes)[:, 0, :] # [batch_size, num_nodes]
+
+            nll_loss = self.nll_loss_fn(pred_first_step[:, self.dst_idx].clamp(min=0), first_step[:, self.dst_idx], sigma[:, self.dst_idx]) # input size should be [num_nodes, batch_size] or [batch_size, num_nodes]
+            loss = mse + nll_loss
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            if (iter+1) % 10 == 0:
+                self.model.eval()
+                if self.eval(eval_x, eval_y): break
+                self.model.train()
+
+    def inference(self, observation):
+        self.model.eval()
+        observation = observation.permute(1, 2, 0)
+        pred, sigma = self.model(observation)
+        self.sigma_list.append(sigma)
+        return pred.reshape([-1, self.pred_horizon, self.num_nodes]).permute(2, 0, 1)
+
+class OnlineDeepar(BaseLearner):
+    def __init__(self, chunk_size, dataset, pred_horizon, lags, g, device, hidden_units, num_layers, train_steps, buffer):
+        super().__init__(pred_horizon, lags, g, device, train_steps, buffer, chunk_size)
+        self.model = DeepAR(input_size_per_node=1, hidden_size=hidden_units, num_nodes=self.num_nodes,
+                            num_layers=num_layers, pred_horizon=pred_horizon-1)
+        self.name = "Online_DeepAR"
+        if dataset == "train_station":
+            self.model.load_state_dict(torch.load(f'./checkpoint/deepar/deepar_train_station_lags{lags}_hor{pred_horizon}_best.pth'))
+        elif dataset == "crossroad":
+            self.model.load_state_dict(torch.load(f'./checkpoint/deepar/deepar_crossroad_lags{lags}_hor{pred_horizon}_best.pth'))
+        elif dataset == "maze":
+            self.model.load_state_dict(torch.load(f'./checkpoint/deepar/deepar_maze_lags{lags}_hor{pred_horizon}_best.pth'))
+        elif dataset == "edinburgh":
+            self.model.load_state_dict(torch.load(f'./checkpoint/deepar/deepar_edinburgh_lags{lags}_hor{pred_horizon}_best.pth'))
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01, weight_decay=1e-5)
+        self.loss_fn = torch.nn.MSELoss()
+        self.nll_loss_fn = NegativeBinomialDistributionLoss()
+        self.chunk_size = chunk_size
+        self.sigma_list = [] # record sigma for each step
+        if self.buffer:
+            self.batch_size = 30
+            self.data_capacity = 1500
+        else:
+            self.data_capacity = self.chunk_size
+        self.data_buffer = replay_buffer(self.data_capacity)
+        
+    def eval(self, eval_x, eval_y):
+        eval_x = eval_x.permute(1, 2, 0)
+        pred, sigma = self.model.inference(eval_x)
+        pred = pred.reshape(pred.shape[0], self.pred_horizon, self.num_nodes).permute(2, 0, 1)
+        eval_loss = self.loss_fn(pred[self.dst_idx, :, :], eval_y[self.dst_idx, :, :])
+        return self.early_stopper.early_stop(eval_loss)
+    
+    def learn(self, observation, label):
+        self.model.train()
+        train_x = observation[:, :self.train_portion, :]
+        train_y = label[:, :self.train_portion, :]
+        eval_x = observation[:, self.train_portion:, :]
+        eval_y = label[:, self.train_portion:, :]
+        train_x = train_x.permute(1, 2, 0) # [batch_size, num_time_steps, num_nodes]
+        train_y = train_y.permute(1, 2, 0) # [batch_size, 1, num_nodes * pred_horizon]
+        observation = observation.permute(1, 2, 0) # [batch_size, num_time_steps, num_nodes]
+        label = label.permute(1, 2, 0) # [batch_size, pred_horizon, num_nodes]
+        for s in range(observation.shape[0]):
+            self.data_buffer.add(observation[s, :, :], label[s, :, :])
+            
+        for iter in range(self.iters):
+            if iter == 0:
+                x, y = [observation], [label]
+                # x, y = [train_x], [train_y]
+                input = torch.cat((torch.cat(x, dim=0), torch.cat(y, dim=0)), dim=1)
+                pred, sigma = self.model(input)
+                label = torch.cat(y, dim=0)
+            else:
+                x, y = self.data_buffer.sample(self.batch_size)
+                input = torch.cat((torch.stack(x, dim=0), torch.stack(y, dim=0)), dim=1)
+                pred, sigma = self.model(input)
+                label = torch.stack(y, dim=0)
+
+            loss = self.model.compute_loss(pred, sigma, input[:, 1:, :])
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            # if (iter+1) % 10 == 0:
+            #     self.model.eval()
+            #     if self.eval(eval_x, eval_y): break
+            #     self.model.train()
+
+    def inference(self, observation):
+        observation = observation.permute(1, 2, 0)
+        pred, sigma = self.model.inference(observation)
+        self.sigma_list.append(sigma[:, 0, :]) # only record sigma of the first step
         return pred.reshape([-1, self.pred_horizon, self.num_nodes]).permute(2, 0, 1)
 
 
@@ -1038,4 +1298,5 @@ class OnlineLstmSingle(BaseLearner):
 
         pred = torch.stack(pred_list, dim=-1)
         return pred.permute(2, 0, 1) #[nodes, N, pred_horizon]
+
 

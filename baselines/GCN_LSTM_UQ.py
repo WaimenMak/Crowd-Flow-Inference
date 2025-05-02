@@ -49,8 +49,8 @@ class GCN_LSTM_UQ(nn.Module):
         return h, sigma
 
     def inference(self, g, in_feat):
-        h, _ = self.forward(g, in_feat)
-        return h.clamp(min=0)
+        h, sigma = self.forward(g, in_feat)
+        return h.clamp(min=0), sigma
 
 
 if __name__ == '__main__':
@@ -208,7 +208,7 @@ if __name__ == '__main__':
             g.ndata['feature'] = x.permute(2, 0, 1) # [node, batch_size, num_timesteps_input]
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
 
-            pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
+            pred, sigma = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
             loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             train_loss.append(loss.item())
 
@@ -230,7 +230,7 @@ if __name__ == '__main__':
             g.ndata['label'] = y.permute(2, 0, 1) # [node, batch_size, pred_horizon]
             # x_up = x[:, :, 0].reshape(-1, num_input_timesteps, num_nodes)
             # x_down = x[:, :, -1].reshape(-1, num_input_timesteps, 1).repeat(1, 1, num_nodes)
-            pred = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
+            pred, sigma = model.inference(g, g.ndata['feature']) # [num_dst, batch_size]
             loss = loss_fn(pred[dst_idx,:, 0], g.ndata['label'][dst_idx,:, 0])
             test_loss.append(loss.item())
 

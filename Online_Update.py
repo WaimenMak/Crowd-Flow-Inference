@@ -27,7 +27,7 @@ class TestThenTrainEnv:
         error_per_chunk = []
         # error_per_chunk = np.zeros((len(self.test_sc), self.pred_horizon, self.chunk_size))
         pred_list = []
-        pred_list2 = []
+        pred_list2 = [] # pred_list2 is the final prediction
         label_list2 = []
         v_list = []
         alpha_list = []
@@ -97,6 +97,12 @@ class TestThenTrainEnv:
                 route_flow[sc] = torch.cat(route_flow_list, dim=1).detach().cpu().numpy()
                 route_speed[sc] = torch.cat(route_speed_list, dim=1).detach().cpu().numpy()
 
+        # save sigma_list
+        if model.model.name in ['Online_LSTM_UQ', 'Online_Diffusion_UQ', 'Online_GCNLSTM_UQ', 'Online_DeepAR']:
+            sigma_list = model.model.sigma_list
+            concatenated_sigma = torch.cat(sigma_list, dim=0).detach().cpu().numpy()
+            np.save(f'checkpoint/{args.model_type}_{dataset_name}_sigma_chunk{chunk_size}_lags{lags}_hor{pred_horizon}.npy', concatenated_sigma)
+            
         return (model, np.stack(error_per_chunk, axis=0), np.stack(pred_list, axis=0), np.concatenate(pred_list2, axis=1), np.concatenate(label_list2, axis=1),
                 v_list, alpha_list, F_list, e_list, route_flow, route_speed, compute_time)
 
@@ -128,7 +134,7 @@ if __name__ == '__main__':
     parser.add_argument('--pred_horizons', type=int, default=7, help='Prediction horizons')
     parser.add_argument('--chunk_size', type=int, default=30, help='Chunk size')
     parser.add_argument('--train_steps', type=int, default=200, help='Training iterations for each chunk')
-    parser.add_argument('--model_type', type=str, default='Online_GCNLSTM_UQ', help='Type of model')
+    parser.add_argument('--model_type', type=str, default='Online_DeepAR', help='Type of model')
     parser.add_argument('--no-buffer', dest='buffer', action='store_false',
                         help='Whether not to use buffer')
     parser.add_argument('--no-save', dest='save', action='store_false',
@@ -245,6 +251,10 @@ if __name__ == '__main__':
         from test_then_train.Online_Models import OnlineLstmUq
         model = SingleModel(model_type=OnlineLstmUq, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=64,
                             chunk_size=chunk_size, num_layers=2, train_steps=args.train_steps, buffer=args.buffer)
+    elif args.model_type == 'Online_DeepAR':
+        from test_then_train.Online_Models import OnlineDeepar
+        model = SingleModel(model_type=OnlineDeepar, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=64,
+                            chunk_size=chunk_size, num_layers=2, train_steps=args.train_steps, buffer=args.buffer)
     elif args.model_type == 'Online_GCN':
         from test_then_train.Online_Models import OnlineGcn
         model = SingleModel(model_type=OnlineGcn, dataset=dataset_name, g=g, pred_horizon=pred_horizon, lags=args.lags, device=device, hidden_units=128,
@@ -284,7 +294,7 @@ if __name__ == '__main__':
     # model = Single_Model(model_type=Online_MA, g=g, pred_horizon=pred_horizon, lags=lags, device=device, train_steps=None)
     # model = Single_Model(model_type=ELM, g=g, pred_horizon=pred_horizon, lags=5, device=None, hidden_units=100)
     # model, curve_data, _ = test_env.test_then_train(model)
-    # if args.model_type != 'Online_MA'
+
     logger.info(f'Model graph device: {model.model.g.device}')
     logger.info("#####################")
     start_time = time.time()
@@ -332,13 +342,13 @@ if __name__ == '__main__':
             # torch.save(model.model.model.state_dict(),
             #            f"./checkpoint/diffusion/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
 
-        #not in use code
-        elif args.model_type == 'Online_LSTM_UQ':
-            torch.save(model.model.model.state_dict(),
-                       f"./checkpoint/lstm/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
-        elif args.model_type == 'Online_GCNLSTM_UQ':
-            torch.save(model.model.model.state_dict(),
-                       f"./checkpoint/gcn/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+        #not in use code, only active if we want to save the model
+        # elif args.model_type == 'Online_LSTM_UQ':
+        #     torch.save(model.model.model.state_dict(),
+        #                f"./checkpoint/lstm/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
+        # elif args.model_type == 'Online_GCNLSTM_UQ':
+        #     torch.save(model.model.model.state_dict(),
+        #                f"./checkpoint/gcn/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
         # elif args.model_type == 'Online_GCN':
         #     torch.save(model.model.model.state_dict(),
         #                f"./checkpoint/gcn/{args.model_type}_{dataset_name}_chunk{chunk_size}_lags{args.lags}_hor{pred_horizon}.pth")
