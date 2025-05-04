@@ -134,6 +134,7 @@ class Probabilistic_Model(torch.nn.Module):
         a = self.attn_fc1(z).squeeze(dim=2)  # [num_edges, bc, 2 * hidden size + 1] --> [num_edges, bc]
         score = edge_softmax(self.g, func.leaky_relu(a), norm_by='src') # [num_edges, bc]
         return {'e': score}
+
     def forward(self, features):
         # with torch.no_grad():
         #     features = self.scalar.transform(features)
