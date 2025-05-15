@@ -160,7 +160,7 @@ cython_debug/
 .idea
 
 #others
-sc_sensor/
+#sc_sensor/
 fig/
 .DS_Store
 /log.o
